@@ -7,8 +7,16 @@ import BalanceSummary from '../components/dashboard/BalanceSummary';
 import AddExpenseModal from '../components/expenses/AddExpenseModal';
 
 const Dashboard: React.FC = () => {
-  const { expenses, friends, getBalances } = useAppContext();
+  const { expenses, friends, getBalances, currentUser, isLoading, error } = useAppContext();
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+
+  if (isLoading) {
+    return <div className="p-6 text-center"><p>Loading dashboard data...</p></div>;
+  }
+
+  if (error) {
+    return <div className="p-6 text-center text-red-600"><p>Error loading data: {error}</p></div>;
+  }
   
   // Get recent expenses (last 5)
   const recentExpenses = [...expenses]
@@ -26,7 +34,7 @@ const Dashboard: React.FC = () => {
   const totalOwe = balances
     .filter((b) => b.balance < 0)
     .reduce((sum, b) => sum + Math.abs(b.balance), 0);
-  
+
   return (
     <div className="space-y-6 pb-16 md:pb-0">
       <div className="flex justify-between items-center">
