@@ -189,7 +189,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   }`}
                 >
                   <DivideSquare className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm text-teal-600 font-medium">Equal Split</span>
+                  <span className="block text-sm font-medium">Equal Split</span>
                 </button>
                 
                 <button
@@ -202,7 +202,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   }`}
                 >
                   <DollarSign className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm text-teal-600 font-medium">Custom Amounts</span>
+                  <span className="block text-sm font-medium">Custom Amounts</span>
                 </button>
                 
                 <button
@@ -215,7 +215,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   }`}
                 >
                   <Percent className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm text-teal-600 font-medium">Percentages</span>
+                  <span className="block text-sm font-medium">Percentages</span>
                 </button>
               </div>
               
