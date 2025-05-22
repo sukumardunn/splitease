@@ -5,7 +5,7 @@ import { useAppContext } from '../../context/AppContext';
 import AddExpenseModal from '../expenses/AddExpenseModal';
 
 const Navbar: React.FC = () => {
-  const { currentUser } = useAppContext();
+  const { currentUser, isLoading } = useAppContext();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
 
@@ -37,13 +37,15 @@ const Navbar: React.FC = () => {
               <Settings className="h-6 w-6" />
             </Link>
             
-            <Link to="/settings" className="flex items-center">
-              <img
-                src={currentUser.avatar}
-                alt={currentUser.name}
-                className="h-8 w-8 rounded-full object-cover border-2 border-teal-400"
-              />
-            </Link>
+            {!isLoading && currentUser && (
+              <Link to="/settings" className="flex items-center">
+                <img
+                  src={currentUser.avatar}
+                  alt={currentUser.name}
+                  className="h-8 w-8 rounded-full object-cover border-2 border-teal-400"
+                />
+              </Link>
+            )}
           </div>
           
           <div className="flex md:hidden items-center">
@@ -96,19 +98,21 @@ const Navbar: React.FC = () => {
               </div>
             </Link>
             
-            <Link
-              to="/settings"
-              className="block px-3 py-2 rounded-md text-teal-100 hover:text-white hover:bg-teal-500 transition-colors duration-200"
-            >
-              <div className="flex items-center">
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  className="h-6 w-6 rounded-full object-cover border-2 border-teal-400 mr-2"
-                />
-                <span>Profile</span>
-              </div>
-            </Link>
+            {!isLoading && currentUser && (
+              <Link
+                to="/settings"
+                className="block px-3 py-2 rounded-md text-teal-100 hover:text-white hover:bg-teal-500 transition-colors duration-200"
+              >
+                <div className="flex items-center">
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    className="h-6 w-6 rounded-full object-cover border-2 border-teal-400 mr-2"
+                  />
+                  <span>Profile</span>
+                </div>
+              </Link>
+            )}
           </div>
         </div>
       )}
