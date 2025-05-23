@@ -3,15 +3,36 @@ import { Link } from 'react-router-dom';
 import { Plus, Users, Search } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { Group } from '../types';
+import CreateGroupModal from '../components/groups/CreateGroupModal'; // Import the modal
 
 const Groups: React.FC = () => {
-  const { groups } = useAppContext();
+  const { groups, addGroup } = useAppContext(); // Destructure addGroup
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
   
   // Filter groups based on search query
   const filteredGroups = groups.filter(group => 
     group.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleCreateGroupSubmit = async (groupData: { name: string; avatarUrl?: string; memberIds: string[] }) => {
+    // Ensure addGroup is available from context
+    if (addGroup) {
+      try {
+        await addGroup({
+          name: groupData.name,
+          avatarUrl: groupData.avatarUrl,
+          memberIds: groupData.memberIds,
+        });
+        // Optionally, show a success message or toast here
+        // console.log("Group created successfully via context!");
+      } catch (error) {
+        // Optionally, show an error message or toast here if addGroup itself doesn't set a global error
+        console.error("Failed to create group from component:", error);
+      }
+    }
+    setIsCreateGroupModalOpen(false); // Close modal
+  };
   
   return (
     <div className="space-y-6 pb-16 md:pb-0">
@@ -32,7 +53,10 @@ const Groups: React.FC = () => {
             />
           </div>
           
-          <button className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200">
+          <button 
+            onClick={() => setIsCreateGroupModalOpen(true)}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+          >
             <Plus className="h-5 w-5 mr-2" />
             <span>New Group</span>
           </button>
@@ -54,11 +78,22 @@ const Groups: React.FC = () => {
               ? "We couldn't find any groups matching your search."
               : "You don't have any groups yet. Create a group to start tracking shared expenses."}
           </p>
-          <button className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg inline-flex items-center transition-colors duration-200">
+          <button 
+            onClick={() => setIsCreateGroupModalOpen(true)}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg inline-flex items-center transition-colors duration-200"
+          >
             <Plus className="h-5 w-5 mr-2" />
             <span>Create Group</span>
           </button>
         </div>
+      )}
+
+      {isCreateGroupModalOpen && (
+        <CreateGroupModal
+          isOpen={isCreateGroupModalOpen}
+          onClose={() => setIsCreateGroupModalOpen(false)}
+          onSubmit={handleCreateGroupSubmit} // Pass the new handler
+        />
       )}
     </div>
   );

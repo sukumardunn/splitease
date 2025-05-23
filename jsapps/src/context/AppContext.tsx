@@ -11,7 +11,7 @@ interface AppContextType {
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => void;
   updateExpense: (id: string, expense: Partial<Expense>) => void;
   deleteExpense: (id: string) => void;
-  addGroup: (group: Omit<Group, 'id'>) => void;
+  addGroup: (groupDetails: { name: string; avatarUrl?: string; memberIds: string[] }) => Promise<void>;
   updateGroup: (id: string, group: Partial<Group>) => void;
   deleteGroup: (id: string) => void;
   settleDebt: (fromId: string, toId: string, amount: number) => void;
@@ -64,12 +64,98 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     setExpenses((prev) => prev.filter((expense) => expense.id !== id));
   };
 
-  const addGroup = (group: Omit<Group, 'id'>) => {
-    const newGroup: Group = {
-      ...group,
-      id: Date.now().toString(),
-    };
-    setGroups((prev) => [newGroup, ...prev]);
+  const addGroup = async (groupDetails: { name: string; avatarUrl?: string; memberIds: string[] }) => {
+    if (!currentUser) {
+      console.error("addGroup: No current user found. Cannot create group.");
+      // Optionally set an error state here if one exists for such issues
+      return;
+    }
+
+    try {
+      // 1. Insert into 'groups' table
+      const { data: newGroupData, error: groupError } = await supabase
+        .from('groups')
+        .insert([{
+          name: groupDetails.name,
+          avatar_url: groupDetails.avatarUrl,
+          created_by: currentUser.id,
+        }])
+        .select()
+        .single();
+
+      if (groupError) {
+        console.error('Error inserting group:', groupError);
+        setError('Failed to create group. ' + groupError.message); // Update main error state
+        return;
+      }
+
+      if (!newGroupData) {
+        console.error('No data returned for new group.');
+        setError('Failed to create group: No data returned.');
+        return;
+      }
+
+      const newGroupId = newGroupData.id;
+
+      // 2. Prepare and insert into 'group_members' table
+      const allMemberIds = Array.from(new Set([...groupDetails.memberIds, currentUser.id]));
+      const membersToInsert = allMemberIds.map(userId => ({
+        group_id: newGroupId,
+        user_id: userId,
+      }));
+
+      if (membersToInsert.length > 0) {
+        const { error: membersError } = await supabase
+          .from('group_members')
+          .insert(membersToInsert);
+
+        if (membersError) {
+          console.error('Error inserting group members:', membersError);
+          setError('Group created, but failed to add members. ' + membersError.message);
+          // Attempt to re-fetch groups anyway, or implement cleanup
+          // For now, we'll try to re-fetch groups.
+        }
+      }
+
+      // 3. Refresh Groups State
+      // Using the nested select approach for efficiency as suggested
+      const { data: freshGroups, error: freshGroupsError } = await supabase
+        .from('groups')
+        .select(`
+          id,
+          name,
+          avatar_url,
+          created_by,
+          created_at,
+          group_members (
+            user_id
+          )
+        `);
+        // Ensure your 'Group' type and this query are compatible.
+        // The 'group_members' part will be an array of objects like { user_id: string }.
+
+      if (freshGroupsError) {
+        console.error('Error re-fetching groups:', freshGroupsError);
+        setError('Failed to refresh groups after adding new one. ' + freshGroupsError.message);
+      } else if (freshGroups) {
+        const processedGroups: Group[] = freshGroups.map((g: any) => ({ // Use 'any' or define a more specific type for Supabase response
+          id: g.id,
+          name: g.name,
+          avatar: g.avatar_url || undefined, // Match Group type
+          members: g.group_members.map((gm: { user_id: string }) => gm.user_id),
+          // Add other fields if your Group type has them, e.g., created_by, created_at
+        }));
+        setGroups(processedGroups);
+        setError(null); // Clear previous errors if successful
+      } else {
+        // Handle case where freshGroups is null but no error (should be rare)
+        setGroups([]); // Or keep existing state
+      }
+
+    } catch (e: any) {
+      console.error('Unexpected error in addGroup:', e);
+      setError('An unexpected error occurred while creating the group. ' + e.message);
+    }
   };
 
   const updateGroup = (id: string, updatedGroup: Partial<Group>) => {
@@ -149,117 +235,162 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       setError(null);
 
       try {
-        // Fetch Current User and All Users
         const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
-        if (authError || !authUser) {
-          console.error('Error fetching auth user:', authError);
-          setError(authError?.message || 'Could not authenticate user.');
-          setIsLoading(false);
+
+        if (authError) {
+          console.error('Error fetching authenticated user:', authError);
+          setError('Error checking authentication status.'); // More generic error
+          setCurrentUser(null);
+          // setIsLoading(false) will be handled by finally
           return;
         }
+
+        if (!authUser) {
+          // No user is logged in, this is not an "error" for the app, just a state.
+          setCurrentUser(null);
+          setFriends([]);
+          setGroups([]);
+          setExpenses([]);
+          // setIsLoading(false) will be handled by finally
+          return; // Stop further data fetching as it depends on a user
+        }
+
+        // If authUser exists, proceed to fetch their details from 'users' table and other data
+        const { data: usersData, error: usersError } = await supabase.from('users').select('*') as { data: Database['public']['Tables']['users']['Row'][] | null, error: any };
 
         const { data: usersData, error: usersError } = await supabase.from('users').select('*') as { data: Database['public']['Tables']['users']['Row'][] | null, error: any };
-        if (usersError || !usersData) {
+
+        if (usersError) {
           console.error('Error fetching users:', usersError);
-          setError(usersError?.message || 'Could not fetch users.');
-          setIsLoading(false);
+          setError('Failed to fetch user data.');
+          // Set a minimal current user from auth data if users table fails
+          setCurrentUser({
+            id: authUser.id,
+            name: authUser.email || 'User',
+            avatar: '',
+            email: authUser.email || '',
+          });
+          setFriends([]);
+          // setIsLoading(false) will be handled by finally
           return;
         }
-
-        const currentSupabaseUser = usersData.find(u => u.id === authUser.id);
-        if (!currentSupabaseUser) {
-          setError('Current user not found in database.');
-          setIsLoading(false);
-          return;
+        
+        if (!usersData) { // This case handles explicit null data without an error object
+            console.warn('No users data returned, though no explicit error from Supabase call.');
+            setError('Failed to retrieve user profiles.');
+            setCurrentUser({ // Set a minimal current user
+                id: authUser.id,
+                name: authUser.email || 'User',
+                avatar: '',
+                email: authUser.email || '',
+            });
+            setFriends([]);
+            // setIsLoading(false) will be handled by finally
+            return;
         }
-        setCurrentUser({
-            id: currentSupabaseUser.id,
-            name: currentSupabaseUser.name || '',
-            avatar: currentSupabaseUser.avatar_url || undefined,
-            email: currentSupabaseUser.email || '',
-        });
 
-        setFriends(usersData.filter(u => u.id !== authUser.id).map(f => ({
+        const foundUser = usersData.find(u => u.id === authUser.id);
+
+        if (foundUser) {
+          setCurrentUser({
+            id: foundUser.id,
+            name: foundUser.name || '',
+            avatar: foundUser.avatar_url || '', // Use empty string if null
+            email: foundUser.email || '',
+          });
+          setFriends(usersData.filter(u => u.id !== authUser.id).map(f => ({
             id: f.id,
             name: f.name || '',
-            avatar: f.avatar_url || undefined,
+            avatar: f.avatar_url || '', // Use empty string if null
             email: f.email || '',
-        })));
-
-        // Fetch Groups and Members
-        const { data: groupsData, error: groupsError } = await supabase.from('groups').select('*') as { data: Database['public']['Tables']['groups']['Row'][] | null, error: any };
-        if (groupsError || !groupsData) {
-          console.error('Error fetching groups:', groupsError);
-          setError(groupsError?.message || 'Could not fetch groups.');
-          setIsLoading(false);
-          return;
+          })));
+        } else {
+          // AuthUser exists but not in 'users' table.
+          console.warn(`Authenticated user ${authUser.id} not found in users table. User might be new or data inconsistent.`);
+          setCurrentUser({
+            id: authUser.id,
+            email: authUser.email || '',
+            name: authUser.email || 'New User', // Fallback name
+            avatar: '', // Default or empty avatar
+          });
+          setFriends([]); // No friends if user data is incomplete like this
         }
 
-        const processedGroups: Group[] = await Promise.all(groupsData.map(async (group) => {
-          const { data: membersData, error: membersError } = await supabase.from('group_members').select('user_id').eq('group_id', group.id) as { data: { user_id: string }[] | null, error: any };
-          if (membersError || !membersData) {
-            console.error(`Error fetching members for group ${group.id}:`, membersError);
-            // Continue processing other groups, or throw specific error
+        // Fetch Groups and Members (only if authUser was present)
+        const { data: groupsData, error: groupsError } = await supabase.from('groups').select('*') as { data: Database['public']['Tables']['groups']['Row'][] | null, error: any };
+        if (groupsError) {
+          console.error('Error fetching groups:', groupsError);
+          setError(groupsError?.message || 'Could not fetch groups.');
+          // Do not return; try to fetch expenses. Data will be partial.
+        } else if (groupsData) {
+          const processedGroups: Group[] = await Promise.all(groupsData.map(async (group) => {
+            const { data: membersData, error: membersError } = await supabase.from('group_members').select('user_id').eq('group_id', group.id) as { data: { user_id: string }[] | null, error: any };
+            if (membersError || !membersData) { // Ensure membersData is not null
+              console.error(`Error fetching members for group ${group.id}:`, membersError || 'No members data');
+              return {
+                id: group.id,
+                name: group.name,
+                avatar: group.avatar_url || '',
+                members: [],
+              };
+            }
             return {
               id: group.id,
               name: group.name,
-              avatar: group.avatar_url || undefined,
-              members: [], // Or handle error more gracefully
+              avatar: group.avatar_url || '',
+              members: membersData.map(m => m.user_id),
             };
-          }
-          return {
-            id: group.id,
-            name: group.name,
-            avatar: group.avatar_url || undefined,
-            members: membersData.map(m => m.user_id),
-          };
-        }));
-        setGroups(processedGroups);
-
-        // Fetch Expenses and Splits
-        const { data: expensesData, error: expensesError } = await supabase.from('expenses').select('*') as { data: Database['public']['Tables']['expenses']['Row'][] | null, error: any };
-        if (expensesError || !expensesData) {
-          console.error('Error fetching expenses:', expensesError);
-          setError(expensesError?.message || 'Could not fetch expenses.');
-          setIsLoading(false);
-          return;
+          }));
+          setGroups(processedGroups);
+        } else {
+          setGroups([]); // No groups found or no data
         }
 
-        const processedExpenses: Expense[] = await Promise.all(expensesData.map(async (expense) => {
-          const { data: splitsData, error: splitsError } = await supabase.from('expense_splits').select('user_id, amount').eq('expense_id', expense.id) as { data: { user_id: string, amount: number }[] | null, error: any };
-          if (splitsError || !splitsData) {
-            console.error(`Error fetching splits for expense ${expense.id}:`, splitsError);
-             // Continue processing other expenses, or throw specific error
+        // Fetch Expenses and Splits (only if authUser was present and users fetch was successful enough to set a currentUser)
+        const { data: expensesData, error: expensesError } = await supabase.from('expenses').select('*') as { data: Database['public']['Tables']['expenses']['Row'][] | null, error: any };
+        if (expensesError) {
+          console.error('Error fetching expenses:', expensesError);
+          setError(expensesError?.message || 'Could not fetch expenses.');
+          // Do not return; data will be partial.
+        } else if (expensesData) {
+          const processedExpenses: Expense[] = await Promise.all(expensesData.map(async (expense) => {
+            const { data: splitsData, error: splitsError } = await supabase.from('expense_splits').select('user_id, amount').eq('expense_id', expense.id) as { data: { user_id: string, amount: number }[] | null, error: any };
+            if (splitsError || !splitsData) { // Ensure splitsData is not null
+              console.error(`Error fetching splits for expense ${expense.id}:`, splitsError || 'No splits data');
+              return {
+                id: expense.id,
+                description: expense.description,
+                amount: expense.amount,
+                paidBy: expense.paid_by,
+                splitWith: [],
+                category: expense.category as ExpenseCategory,
+                currency: expense.currency || 'USD',
+                date: expense.created_at,
+                groupId: expense.group_id || null,
+              };
+            }
             return {
               id: expense.id,
               description: expense.description,
               amount: expense.amount,
               paidBy: expense.paid_by,
-              splitWith: [], // Or handle error
+              splitWith: splitsData.map(s => ({ userId: s.user_id, amount: s.amount })),
               category: expense.category as ExpenseCategory,
-              currency: expense.currency || 'USD', // Default currency if not set
+              currency: expense.currency || 'USD',
               date: expense.created_at,
               groupId: expense.group_id || null,
             };
-          }
-          return {
-            id: expense.id,
-            description: expense.description,
-            amount: expense.amount,
-            paidBy: expense.paid_by,
-            splitWith: splitsData.map(s => ({ userId: s.user_id, amount: s.amount })),
-            category: expense.category as ExpenseCategory,
-            currency: expense.currency || 'USD',
-            date: expense.created_at,
-            groupId: expense.group_id || null,
-          };
-        }));
-        setExpenses(processedExpenses);
+          }));
+          setExpenses(processedExpenses);
+        } else {
+          setExpenses([]); // No expenses found or no data
+        }
 
-        setIsLoading(false);
       } catch (e: any) {
         console.error('Unexpected error fetching data:', e);
         setError(e.message || 'An unexpected error occurred.');
+        setCurrentUser(null); // Clear user state on unexpected error
+      } finally {
         setIsLoading(false);
       }
     };

@@ -1,13 +1,26 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Wallet, Plus, Bell, Settings, Menu, X } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Wallet, Plus, Bell, Settings, Menu, X, LogOut } from 'lucide-react'; // Added LogOut
 import { useAppContext } from '../../context/AppContext';
+import { supabase } from '../../lib/supabase';
 import AddExpenseModal from '../expenses/AddExpenseModal';
 
 const Navbar: React.FC = () => {
   const { currentUser, isLoading } = useAppContext();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      navigate('/login');
+      setIsMenuOpen(false); // Close mobile menu if open
+    } catch (error) {
+      console.error('Error logging out:', error);
+      // Optionally display an error to the user
+    }
+  };
 
   return (
     <header className="bg-teal-600 text-white shadow-md">
@@ -45,6 +58,15 @@ const Navbar: React.FC = () => {
                   className="h-8 w-8 rounded-full object-cover border-2 border-teal-400"
                 />
               </Link>
+            )}
+            {!isLoading && currentUser && (
+              <button
+                onClick={handleLogout}
+                title="Logout"
+                className="text-teal-100 hover:text-white p-2 rounded-full hover:bg-teal-500 transition-colors duration-200"
+              >
+                <LogOut className="h-6 w-6" />
+              </button>
             )}
           </div>
           
@@ -112,6 +134,17 @@ const Navbar: React.FC = () => {
                   <span>Profile</span>
                 </div>
               </Link>
+            )}
+            {!isLoading && currentUser && (
+              <button
+                onClick={handleLogout}
+                className="w-full text-left block px-3 py-2 rounded-md text-teal-100 hover:text-white hover:bg-teal-500 transition-colors duration-200"
+              >
+                <div className="flex items-center">
+                  <LogOut className="h-5 w-5 mr-2" />
+                  <span>Logout</span>
+                </div>
+              </button>
             )}
           </div>
         </div>
