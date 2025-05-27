@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom'; // Import Link
 import { supabase } from '../lib/supabase';
 // import { useAppContext } from '../context/AppContext';
 
@@ -124,6 +124,14 @@ const SignupPage: React.FC = () => {
             </button>
           </div>
         </form>
+        <div className="text-sm text-center mt-4">
+          <p className="text-gray-600">
+            Already have an account?{' '}
+            <Link to="/login" className="font-medium text-teal-600 hover:text-teal-500">
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );
