@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, Receipt, UserPlus, PieChart } from 'lucide-react';
+import { Home, Users, Receipt, UserPlus, PieChart, Activity, Trash2 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
@@ -14,6 +14,8 @@ const Sidebar: React.FC = () => {
     { path: '/groups', label: 'Groups', icon: Users },
     { path: '/expenses', label: 'Expenses', icon: Receipt },
     { path: '/friends', label: 'Friends', icon: UserPlus },
+    { path: '/activity', label: 'Activity', icon: Activity },
+    { path: '/recently-deleted', label: 'Recently Deleted', icon: Trash2 },
   ];
   
   return (
