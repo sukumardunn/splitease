@@ -1,14 +1,27 @@
 import React from 'react';
+import { Trash2 } from 'lucide-react';
 import { Expense } from '../../types';
 import { useAppContext } from '../../context/AppContext';
 import { getExpenseIcon, formatDate } from '../../utils/helpers';
+import { useToast } from '../ui/Toast';
 
 interface ExpenseItemProps {
   expense: Expense;
 }
 
 const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
-  const { currentUser, friends, groups } = useAppContext();
+  const { currentUser, friends, groups, deleteExpense, restoreExpense } = useAppContext();
+  const { showToast } = useToast();
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    deleteExpense(expense.id);
+    showToast({
+      message: 'Expense deleted',
+      actionLabel: 'Undo',
+      onAction: () => restoreExpense(expense.id),
+    });
+  };
   
   // Find the payer
   const payer = expense.paidBy === currentUser.id
@@ -65,6 +78,15 @@ const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
           </div>
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={handleDelete}
+        aria-label={`Delete "${expense.description}"`}
+        className="flex-shrink-0 ml-3 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
     </div>
   );
 };
