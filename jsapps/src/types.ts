@@ -7,7 +7,7 @@ export interface User {
   avatar: string;
 }
 
-export interface Friend extends User {}
+export type Friend = User;
 
 export interface Split {
   userId: string;
