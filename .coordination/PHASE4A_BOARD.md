@@ -10,9 +10,9 @@ COORDINATION section before claiming). Spec: `docs/superpowers/specs/2026-07-19-
 
 | task | status | agent | branch | depends_on | files (scope) | updated_at | notes |
 |------|--------|-------|--------|------------|----------------|------------|-------|
-| T1 migration SQL | UNCLAIMED | | | — | `supabase/migrations/**` | 2026-07-18T20:52:04Z | copy spec §2 verbatim |
-| T2 database.types + client | UNCLAIMED | | | — | `jsapps/src/lib/**` | 2026-07-18T20:52:04Z | |
-| T3 import remapper | UNCLAIMED | | | — | `jsapps/src/services/importRemapper*` | 2026-07-18T20:52:04Z | pure fn + tests |
+| T1 migration SQL | CLAIMED | agent3 | agent/4a-t1-agent3 | — | `supabase/migrations/**` | 2026-07-18T20:52:04Z | copy spec §2 verbatim |
+| T2 database.types + client | CLAIMED | agent3 | agent/4a-t2-agent3 | — | `jsapps/src/lib/**` | 2026-07-18T20:52:04Z | |
+| T3 import remapper | CLAIMED | agent3 | agent/4a-t3-agent3 | — | `jsapps/src/services/importRemapper*` | 2026-07-18T20:52:04Z | pure fn + tests |
 | T4 supabaseStore | UNCLAIMED | | | T2 | `jsapps/src/services/supabaseStore*` | 2026-07-18T20:52:04Z | |
 | T5 auth provider/screen/gate | UNCLAIMED | | | T2 | `jsapps/src/context/AuthContext.tsx`, `jsapps/src/components/auth/**`, `jsapps/src/components/ui/LoadingScreen.tsx`, `jsapps/src/App.tsx`, `jsapps/src/components/layout/Sidebar.tsx` | 2026-07-18T20:52:04Z | |
 | T6 AppContext optimistic refactor | UNCLAIMED | | | T4, T5 | `jsapps/src/context/AppContext.tsx`, `jsapps/src/context/*.test.tsx` | 2026-07-18T20:52:04Z | EXCLUSIVE AppContext.tsx |
