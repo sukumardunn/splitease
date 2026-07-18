@@ -51,3 +51,11 @@ export interface FormattedBalance {
   amount: number;
   youOwe: boolean;
 }
+
+/** The full persistable application state. */
+export interface AppState {
+  currentUser: User;
+  friends: Friend[];
+  groups: Group[];
+  expenses: Expense[];
+}

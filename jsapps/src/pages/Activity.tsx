@@ -180,8 +180,7 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ activity }) => {
   
   if (activity.type === 'settlement') {
     const settlement = activity.data;
-    const isCurrentUserPayer = settlement.fromId === currentUser.id;
-    
+
     return (
       <div className="px-6 py-4 hover:bg-gray-50 transition-colors">
         <div className="flex items-start">

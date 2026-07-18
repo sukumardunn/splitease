@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Expense, Friend, Group, User } from '../types';
+import { AppState, Expense, Friend, Group, User } from '../types';
 import { demoData } from '../data/demoData';
+import { loadState, saveState } from '../services/localStore';
+import { computeBalances } from '../services/splitCalculator';
 
 interface AppContextType {
   currentUser: User;
@@ -32,11 +34,26 @@ interface AppContextProviderProps {
   children: ReactNode;
 }
 
+/** Load persisted state on first render, seeding from demo data on a fresh device. */
+function getInitialState(): AppState {
+  const persisted = loadState();
+  if (persisted) return persisted;
+  return {
+    currentUser: demoData.currentUser,
+    friends: demoData.friends,
+    groups: demoData.groups,
+    expenses: demoData.expenses,
+  };
+}
+
 export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>(demoData.currentUser);
-  const [friends, setFriends] = useState<Friend[]>(demoData.friends);
-  const [groups, setGroups] = useState<Group[]>(demoData.groups);
-  const [expenses, setExpenses] = useState<Expense[]>(demoData.expenses);
+  const [state, setState] = useState<AppState>(getInitialState);
+  const { currentUser, friends, groups, expenses } = state;
+
+  // Persist the whole state to localStorage on every change.
+  useEffect(() => {
+    saveState(state);
+  }, [state]);
 
   const addExpense = (expense: Omit<Expense, 'id' | 'date'>) => {
     const newExpense: Expense = {
@@ -44,37 +61,44 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       id: Date.now().toString(),
       date: new Date().toISOString(),
     };
-    setExpenses((prev) => [newExpense, ...prev]);
+    setState((prev) => ({ ...prev, expenses: [newExpense, ...prev.expenses] }));
   };
 
   const updateExpense = (id: string, updatedExpense: Partial<Expense>) => {
-    setExpenses((prev) =>
-      prev.map((expense) =>
+    setState((prev) => ({
+      ...prev,
+      expenses: prev.expenses.map((expense) =>
         expense.id === id ? { ...expense, ...updatedExpense } : expense
-      )
-    );
+      ),
+    }));
   };
 
   const deleteExpense = (id: string) => {
-    setExpenses((prev) => prev.filter((expense) => expense.id !== id));
+    setState((prev) => ({
+      ...prev,
+      expenses: prev.expenses.filter((expense) => expense.id !== id),
+    }));
   };
 
   const addGroup = (group: Omit<Group, 'id'>) => {
-    const newGroup: Group = {
-      ...group,
-      id: Date.now().toString(),
-    };
-    setGroups((prev) => [newGroup, ...prev]);
+    const newGroup: Group = { ...group, id: Date.now().toString() };
+    setState((prev) => ({ ...prev, groups: [newGroup, ...prev.groups] }));
   };
 
   const updateGroup = (id: string, updatedGroup: Partial<Group>) => {
-    setGroups((prev) =>
-      prev.map((group) => (group.id === id ? { ...group, ...updatedGroup } : group))
-    );
+    setState((prev) => ({
+      ...prev,
+      groups: prev.groups.map((group) =>
+        group.id === id ? { ...group, ...updatedGroup } : group
+      ),
+    }));
   };
 
   const deleteGroup = (id: string) => {
-    setGroups((prev) => prev.filter((group) => group.id !== id));
+    setState((prev) => ({
+      ...prev,
+      groups: prev.groups.filter((group) => group.id !== id),
+    }));
   };
 
   const settleDebt = (fromId: string, toId: string, amount: number) => {
@@ -90,56 +114,17 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   };
 
   const getBalances = () => {
-    const balances = new Map<string, number>();
-
-    // Initialize balances for all friends
-    friends.forEach((friend) => {
-      balances.set(friend.id, 0);
-    });
-
-    // Calculate balances based on expenses
-    expenses.forEach((expense) => {
-      if (expense.paidBy === currentUser.id) {
-        // Current user paid, others owe them
-        expense.splitWith.forEach((split) => {
-          if (split.userId !== currentUser.id) {
-            balances.set(
-              split.userId,
-              (balances.get(split.userId) || 0) + split.amount
-            );
-          }
-        });
-      } else if (expense.splitWith.some((split) => split.userId === currentUser.id)) {
-        // Current user owes the payer
-        const userSplit = expense.splitWith.find(
-          (split) => split.userId === currentUser.id
-        );
-        if (userSplit) {
-          balances.set(
-            expense.paidBy,
-            (balances.get(expense.paidBy) || 0) - userSplit.amount
-          );
-        }
-      }
-    });
-
-    // Convert to array of friend objects with balances
-    return Array.from(balances.entries()).map(([friendId, balance]) => ({
+    const friendIds = friends.map((f) => f.id);
+    const balances = computeBalances(currentUser.id, friendIds, expenses);
+    return friendIds.map((friendId) => ({
       friend: friends.find((f) => f.id === friendId)!,
-      balance,
+      balance: balances[friendId] ?? 0,
     }));
   };
 
-  const getGroupById = (id: string) => {
-    return groups.find((group) => group.id === id);
-  };
+  const getGroupById = (id: string) => groups.find((group) => group.id === id);
 
-  useEffect(() => {
-    // This would be a place to load data from localStorage or an API
-    // For now, we're using the demo data
-  }, []);
-
-  const value = {
+  const value: AppContextType = {
     currentUser,
     friends,
     groups,

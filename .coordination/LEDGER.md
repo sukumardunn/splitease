@@ -8,7 +8,7 @@ Timestamps are ISO-8601 UTC. Keep this table sorted by `claimed_at`.
 
 | agent  | status | branch | scope | task | claimed_at | last_heartbeat | notes |
 |--------|--------|--------|-------|------|------------|----------------|-------|
-| agent1 | ACTIVE | agent/phase1-persistence-agent1 | `jsapps/src/services/**`, `jsapps/src/context/AppContext.tsx`, `jsapps/src/data/**`, `jsapps/src/types.ts`, `jsapps/src/components/expenses/**`, `jsapps/**/*.test.ts*`, `jsapps/vitest.config.ts`, `jsapps/package.json` | Phase 1: on-device persistence + repo layer + payer fix + tests | 2026-07-18T14:04:43Z | 2026-07-18T14:04:43Z | Building first-level working app. Other agents: avoid these files until DONE. |
+| agent1 | DONE | agent/phase1-persistence-agent1 | `jsapps/src/services/**`, `jsapps/src/context/AppContext.tsx`, `jsapps/src/types.ts`, `jsapps/src/components/expenses/AddExpenseModal.tsx`, `jsapps/src/App.tsx`, `jsapps/src/pages/Dashboard.tsx`, `jsapps/src/pages/Activity.tsx`, `jsapps/src/utils/helpers.tsx`, `jsapps/**/*.test.ts*`, `jsapps/vitest.config.ts`, `jsapps/package.json` | Phase 1: on-device persistence + calculator + payer fix + tests | 2026-07-18T14:04:43Z | 2026-07-18T14:12:00Z | DONE. Phase 1 shipped: localStorage persistence, tested split/balance calc, paid-by selector, typecheck-gated build, 16 tests. Scope free for other agents. |
 
 <!--
 Copy this row template, fill it in, delete the example above once real claims exist:
