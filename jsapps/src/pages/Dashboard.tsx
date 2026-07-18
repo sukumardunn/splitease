@@ -7,7 +7,7 @@ import BalanceSummary from '../components/dashboard/BalanceSummary';
 import AddExpenseModal from '../components/expenses/AddExpenseModal';
 
 const Dashboard: React.FC = () => {
-  const { expenses, friends, getBalances } = useAppContext();
+  const { expenses, getBalances } = useAppContext();
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   
   // Get recent expenses (last 5)

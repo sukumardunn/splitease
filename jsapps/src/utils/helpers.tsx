@@ -1,4 +1,3 @@
-import React from 'react';
 import { ShoppingCart, Home, Lightbulb, Coffee, Film, Car, Plane, CreditCard, Wrench, DollarSign } from 'lucide-react';
 import { ExpenseCategory } from '../types';
 

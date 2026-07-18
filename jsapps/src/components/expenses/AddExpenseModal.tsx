@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
-import { X, DollarSign, Percent, DivideSquare, Users } from 'lucide-react';
+import { X, DollarSign, Percent, DivideSquare } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import { ExpenseCategory } from '../../types';
+import { resolveSplits, SplitType } from '../../services/splitCalculator';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-type SplitType = 'equal' | 'custom' | 'percentage';
 
 const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) => {
   const { friends, groups, currentUser, addExpense } = useAppContext();
@@ -16,6 +15,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('other');
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [paidBy, setPaidBy] = useState<string>(currentUser.id);
   const [splitType, setSplitType] = useState<SplitType>('equal');
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
   const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
@@ -38,47 +38,40 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
     
     const totalAmount = parseFloat(amount);
     if (isNaN(totalAmount) || totalAmount <= 0) return;
-    
-    let splits = [];
+
     const participants = [currentUser.id, ...selectedFriends];
-    
-    if (splitType === 'equal') {
-      const splitAmount = totalAmount / participants.length;
-      splits = participants.map(id => ({
-        userId: id,
-        amount: splitAmount
-      }));
-    } else if (splitType === 'percentage') {
-      splits = participants.map(id => ({
-        userId: id,
-        amount: (parseFloat(customSplits[id] || '0') / 100) * totalAmount
-      }));
-    } else {
-      splits = participants.map(id => ({
-        userId: id,
-        amount: parseFloat(customSplits[id] || '0')
-      }));
-    }
-    
+    const customValues: Record<string, number> = {};
+    participants.forEach((id) => {
+      customValues[id] = parseFloat(customSplits[id] || '0');
+    });
+
+    const splits = resolveSplits({
+      totalAmount,
+      participants,
+      splitType,
+      customValues,
+    });
+
     addExpense({
       description,
       amount: totalAmount,
-      paidBy: currentUser.id,
+      paidBy,
       splitWith: splits,
       category,
       currency: 'USD',
-      groupId: selectedGroup
+      groupId: selectedGroup,
     });
-    
+
     onClose();
     resetForm();
   };
-  
+
   const resetForm = () => {
     setDescription('');
     setAmount('');
     setCategory('other');
     setSelectedGroup(null);
+    setPaidBy(currentUser.id);
     setSplitType('equal');
     setSelectedFriends([]);
     setCustomSplits({});
@@ -168,6 +161,24 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                 {groups.map((group) => (
                   <option key={group.id} value={group.id}>
                     {group.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Paid by
+              </label>
+              <select
+                value={paidBy}
+                onChange={(e) => setPaidBy(e.target.value)}
+                className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              >
+                <option value={currentUser.id}>{currentUser.name} (You)</option>
+                {friends.map((friend) => (
+                  <option key={friend.id} value={friend.id}>
+                    {friend.name}
                   </option>
                 ))}
               </select>
