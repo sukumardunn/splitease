@@ -69,7 +69,7 @@ Wave 5:            T8 (env bring-up + live verification)                    [nee
 - Produces: the 9 tables (`profiles`, `friends`, `groups`, `group_members`, `expenses`, `expense_payers`, `expense_splits`, `settlements`, `activity_events`), RLS policies, `handle_new_user()` trigger — the contract T2's types and T4's store are written against.
 
 - [ ] **Step 1: Create the migration file** — open `docs/superpowers/specs/2026-07-19-phase4a-auth-persistence-spec.md` §2 and copy the entire ```sql block VERBATIM (from `-- Phase 4a:` comment through the final `activity_events_own` policy) into `supabase/migrations/20260719000001_phase4a_auth_persistence.sql`. No edits, no reformatting.
-- [ ] **Step 2: Sanity-check** — `grep -c "create table" supabase/migrations/20260719000001_phase4a_auth_persistence.sql` → expected `9`; `grep -c "create policy" …` → expected `11`; `grep -c "enable row level security" …` → expected `9`.
+- [ ] **Step 2: Sanity-check** — `grep -c "create table" supabase/migrations/20260719000001_phase4a_auth_persistence.sql` → expected `9`; `grep -c "create policy" …` → expected `10`; `grep -c "enable row level security" …` → expected `9`.
 - [ ] **Step 3: Commit** — `git add supabase/migrations && git commit -m "feat(4a): schema + RLS + handle_new_user migration"`.
 
 *(No runnable DB yet — SQL executes in T8 via `supabase db reset`. The greps + reviewer eyes are the gate here.)*
