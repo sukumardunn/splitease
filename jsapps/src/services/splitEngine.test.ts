@@ -4,6 +4,7 @@ import {
   validateSplits,
   validatePayers,
   computeNetBalances,
+  computeAbsoluteNet,
   simplifyDebts,
   BalanceExpense,
 } from './splitEngine';
@@ -370,5 +371,80 @@ describe('simplifyDebts', () => {
     expect(Math.round((totals.a - net.a) * 100)).toBe(0);
     expect(Math.round((totals.b - net.b) * 100)).toBe(0);
     expect(Math.round((totals.c - net.c) * 100)).toBe(0);
+  });
+});
+
+describe('computeAbsoluteNet + simplifyDebts round-trip', () => {
+  it('nets a single-payer expense: payer is creditor, others debtors', () => {
+    const expenses: BalanceExpense[] = [
+      {
+        amount: 30,
+        paidBy: 'a',
+        splitWith: [
+          { userId: 'a', amount: 10 },
+          { userId: 'b', amount: 10 },
+          { userId: 'c', amount: 10 },
+        ],
+      },
+    ];
+    const net = computeAbsoluteNet(['a', 'b', 'c'], expenses);
+    expect(net.a).toBeCloseTo(20, 5); // paid 30, share 10
+    expect(net.b).toBeCloseTo(-10, 5);
+    expect(net.c).toBeCloseTo(-10, 5);
+    // whole system nets to zero
+    expect(net.a + net.b + net.c).toBeCloseTo(0, 5);
+  });
+
+  it('handles multi-payer contributions', () => {
+    const expenses: BalanceExpense[] = [
+      {
+        amount: 100,
+        payers: [
+          { userId: 'a', amount: 60 },
+          { userId: 'b', amount: 40 },
+        ],
+        splitWith: [
+          { userId: 'a', amount: 50 },
+          { userId: 'b', amount: 50 },
+        ],
+      },
+    ];
+    const net = computeAbsoluteNet(['a', 'b'], expenses);
+    expect(net.a).toBeCloseTo(10, 5); // paid 60 - share 50
+    expect(net.b).toBeCloseTo(-10, 5);
+  });
+
+  it('a settlement reduces the debtor/creditor gap toward zero', () => {
+    const expenses: BalanceExpense[] = [
+      { amount: 20, paidBy: 'a', splitWith: [ { userId: 'a', amount: 10 }, { userId: 'b', amount: 10 } ] },
+    ];
+    const before = computeAbsoluteNet(['a', 'b'], expenses);
+    expect(before.b).toBeCloseTo(-10, 5);
+    const after = computeAbsoluteNet(['a', 'b'], expenses, [
+      { fromUserId: 'b', toUserId: 'a', amount: 10 },
+    ]);
+    expect(after.a).toBeCloseTo(0, 5);
+    expect(after.b).toBeCloseTo(0, 5);
+  });
+
+  it('simplifyDebts settles the computed net with valid transfers', () => {
+    const expenses: BalanceExpense[] = [
+      { amount: 30, paidBy: 'a', splitWith: [ { userId: 'a', amount: 10 }, { userId: 'b', amount: 10 }, { userId: 'c', amount: 10 } ] },
+    ];
+    const net = computeAbsoluteNet(['a', 'b', 'c'], expenses);
+    const transfers = simplifyDebts(net);
+    // apply transfers back and confirm everyone nets to ~0
+    const applied = { ...net };
+    transfers.forEach((t) => {
+      applied[t.fromUserId] += t.amount;
+      applied[t.toUserId] -= t.amount;
+    });
+    Object.values(applied).forEach((v) => expect(Math.abs(v)).toBeLessThanOrEqual(0.01));
+    // all transfers point at creditor 'a'
+    expect(transfers.every((t) => t.toUserId === 'a')).toBe(true);
+  });
+
+  it('produces no transfers when everyone is settled', () => {
+    expect(simplifyDebts({ a: 0, b: 0, c: 0 })).toEqual([]);
   });
 });

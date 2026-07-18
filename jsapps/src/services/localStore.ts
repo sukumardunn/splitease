@@ -7,7 +7,7 @@ export const STORAGE_KEY = 'splitease.appState';
  * ignored (treated as "no data") so the app re-seeds rather than crashing.
  * A future phase can add real migrations here.
  */
-export const STORAGE_VERSION = 1;
+export const STORAGE_VERSION = 2;
 
 interface Envelope {
   version: number;

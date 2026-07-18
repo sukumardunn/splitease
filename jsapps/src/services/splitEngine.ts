@@ -283,6 +283,49 @@ export function computeNetBalances(
 }
 
 /**
+ * Absolute net position of every id in participantIds across all expenses and
+ * settlements (NOT relative to any one user). Positive => the user is a net
+ * creditor (paid/received more than their share); negative => net debtor.
+ * A settlement from->to models real cash moving, reducing the payer's debt
+ * (net += amount) and the receiver's claim (net -= amount). Feed the result
+ * straight into simplifyDebts to get the minimal set of "who pays whom".
+ */
+export function computeAbsoluteNet(
+  participantIds: string[],
+  expenses: BalanceExpense[],
+  settlements: SettlementRecord[] = []
+): Record<string, number> {
+  const net: Record<string, number> = {};
+  participantIds.forEach((id) => {
+    net[id] = 0;
+  });
+
+  expenses.forEach((expense) => {
+    if (expense.payers && expense.payers.length > 0) {
+      expense.payers.forEach((p) => {
+        if (p.userId in net) net[p.userId] += p.amount;
+      });
+    } else if (expense.paidBy && expense.paidBy in net) {
+      net[expense.paidBy] += expense.amount;
+    }
+    expense.splitWith.forEach((s) => {
+      if (s.userId in net) net[s.userId] -= s.amount;
+    });
+  });
+
+  settlements.forEach((s) => {
+    if (s.fromUserId in net) net[s.fromUserId] += s.amount;
+    if (s.toUserId in net) net[s.toUserId] -= s.amount;
+  });
+
+  Object.keys(net).forEach((id) => {
+    net[id] = roundToCents(net[id]);
+  });
+
+  return net;
+}
+
+/**
  * Debt simplification: given a net map (positive => creditor / is owed,
  * negative => debtor / owes), greedily match the largest debtor against the
  * largest creditor until everyone nets to ~0.

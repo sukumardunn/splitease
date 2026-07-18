@@ -13,6 +13,8 @@ const sample: AppState = {
       date: '2026-01-01T00:00:00Z', category: 'other', currency: 'USD', groupId: 'g1',
     },
   ],
+  settlements: [],
+  activityEvents: [],
 };
 
 describe('localStore', () => {
