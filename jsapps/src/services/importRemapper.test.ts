@@ -100,4 +100,13 @@ describe('remapLocalState', () => {
     remapLocalState(s, PROFILE_ID, seqGen());
     expect(s).toEqual(copy);
   });
+
+  it('does not throw on a legacy v2 envelope missing settlements/activityEvents', () => {
+    const s = baseState();
+    delete (s as Partial<AppState>).settlements;
+    delete (s as Partial<AppState>).activityEvents;
+    const out = remapLocalState(s as AppState, PROFILE_ID, seqGen());
+    expect(out.settlements).toEqual([]);
+    expect(out.activityEvents).toEqual([]);
+  });
 });

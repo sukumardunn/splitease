@@ -49,7 +49,7 @@ export function groupFromRow(row: GroupRow, memberRows: GroupMemberRow[]): Group
     name: row.name,
     avatar: row.avatar,
     members: memberRows.map((m) => m.person_id),
-    deletedAt: row.deleted_at,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
   };
 }
 
@@ -92,11 +92,11 @@ export function expenseFromRow(
         ? payerRows.map((p) => ({ userId: p.person_id, amount: Number(p.amount) }))
         : undefined,
     splitWith: splitRows.map((s) => ({ userId: s.person_id, amount: Number(s.amount) })),
-    date: row.date,
+    date: new Date(row.date).toISOString(),
     category: row.category as ExpenseCategory,
     currency: row.currency,
     groupId: row.group_id,
-    deletedAt: row.deleted_at,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
     notes: row.notes ?? undefined,
   };
 }
@@ -121,9 +121,9 @@ export function settlementFromRow(row: SettlementRow): Settlement {
     toUserId: row.to_person_id,
     amount: Number(row.amount),
     currency: row.currency,
-    date: row.date,
+    date: new Date(row.date).toISOString(),
     groupId: row.group_id,
-    deletedAt: row.deleted_at,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
   };
 }
 
@@ -151,7 +151,7 @@ export function activityEventFromRow(row: ActivityEventRow): ActivityEvent {
     groupId: row.group_id,
     before: row.before,
     after: row.after,
-    createdAt: row.created_at,
+    createdAt: new Date(row.created_at).toISOString(),
   };
 }
 
