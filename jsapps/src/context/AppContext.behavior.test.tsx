@@ -26,14 +26,47 @@ vi.mock('./AuthContext', () => ({
     signOut: vi.fn(),
   }),
 }));
+vi.mock('../services/localStore', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../services/localStore')>();
+  return { ...mod, loadState: vi.fn(), clearState: vi.fn() };
+});
 
 import * as store from '../services/supabaseStore';
+import * as localStore from '../services/localStore';
+import { AppState } from '../types';
+import { IMPORT_HANDLED_KEY } from '../services/importRemapper';
 
 const REMOTE: store.RemoteState = {
   currentUser: { id: 'aaaaaaaa-0000-4000-8000-000000000001', name: 'Me', email: 'me@x.com', avatar: '' },
   friends: [{ id: 'bbbbbbbb-0000-4000-8000-000000000001', name: 'Ana', email: 'a@x.com', avatar: '' }],
   groups: [],
   expenses: [],
+  settlements: [],
+  activityEvents: [],
+};
+
+/** Pre-4a localStorage shape, keyed with legacy string ids (user_1, exp_1, ...). */
+const LOCAL_LEGACY_STATE: AppState = {
+  currentUser: { id: 'user_1', name: 'Legacy Me', email: 'me@x.com', avatar: '' },
+  friends: [{ id: 'user_2', name: 'Ana', email: 'a@x.com', avatar: '' }],
+  groups: [],
+  expenses: [
+    {
+      id: 'exp_1',
+      description: 'Old Dinner',
+      amount: 30,
+      paidBy: 'user_1',
+      splitWith: [
+        { userId: 'user_1', amount: 15 },
+        { userId: 'user_2', amount: 15 },
+      ],
+      date: '2025-01-01T00:00:00.000Z',
+      category: 'dining',
+      currency: 'USD',
+      groupId: null,
+      deletedAt: null,
+    },
+  ],
   settlements: [],
   activityEvents: [],
 };
@@ -125,6 +158,30 @@ async function renderReady() {
 
 const num = (id: string) => Number(screen.getByTestId(id).textContent);
 const click = (id: string) => act(() => screen.getByTestId(id).click());
+const clickButton = (name: string | RegExp) =>
+  act(() => screen.getByRole('button', { name }).click());
+
+const EMPTY_REMOTE: store.RemoteState = {
+  currentUser: REMOTE.currentUser,
+  friends: [],
+  groups: [],
+  expenses: [],
+  settlements: [],
+  activityEvents: [],
+};
+
+const SOME_EXPENSE = {
+  id: 'ffffffff-0000-4000-8000-000000000002',
+  description: 'Pre-existing',
+  amount: 10,
+  paidBy: REMOTE.currentUser.id,
+  splitWith: [{ userId: REMOTE.currentUser.id, amount: 10 }],
+  date: '2026-01-01T00:00:00.000Z',
+  category: 'other' as const,
+  currency: 'USD',
+  groupId: null,
+  deletedAt: null,
+};
 
 describe('AppContext Phase 2/3 behaviour', () => {
   beforeEach(() => {
@@ -183,5 +240,74 @@ describe('AppContext Phase 2/3 behaviour', () => {
     expect(screen.getByTestId('top').textContent).toBe('Coffee');
     await waitFor(() => expect(num('active')).toBe(0));
     expect(screen.getByText(/Couldn.t save your change/)).toBeTruthy();
+  });
+});
+
+/**
+ * Phase 4a: one-time localStorage → account import. Offered only when the
+ * freshly-fetched remote state is entirely empty and pre-4a local data is
+ * present; never re-offered once handled (accepted or dismissed).
+ */
+describe('AppContext one-time import', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.mocked(store.fetchAll).mockResolvedValue(structuredClone(REMOTE));
+    vi.mocked(store.importState).mockResolvedValue(undefined);
+    vi.mocked(localStore.loadState).mockReturnValue(null);
+  });
+
+  it('offers import when remote is empty and local data exists, imports on accept', async () => {
+    vi.mocked(store.fetchAll).mockResolvedValueOnce(structuredClone(EMPTY_REMOTE));
+    vi.mocked(localStore.loadState).mockReturnValue(LOCAL_LEGACY_STATE);
+    localStorage.removeItem(IMPORT_HANDLED_KEY);
+
+    renderApp();
+    expect(await screen.findByText(/import your existing data/i)).toBeTruthy();
+
+    // Refetch after import returns non-empty remote state.
+    vi.mocked(store.fetchAll).mockResolvedValueOnce(structuredClone(REMOTE));
+    clickButton('Import');
+
+    await waitFor(() => expect(store.importState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.fetchAll).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(localStorage.getItem(IMPORT_HANDLED_KEY)).toBe('1')
+    );
+    expect(localStore.clearState).toHaveBeenCalled();
+    expect(screen.queryByText(/import your existing data/i)).toBeNull();
+
+    // Remapped payload carries the authenticated userId, not the legacy 'user_1'.
+    const [ownerId] = vi.mocked(store.importState).mock.calls[0];
+    expect(ownerId).toBe('aaaaaaaa-0000-4000-8000-000000000001');
+  });
+
+  it('never re-offers after dismissal', async () => {
+    vi.mocked(store.fetchAll).mockResolvedValueOnce(structuredClone(EMPTY_REMOTE));
+    vi.mocked(localStore.loadState).mockReturnValue(LOCAL_LEGACY_STATE);
+    localStorage.removeItem(IMPORT_HANDLED_KEY);
+
+    renderApp();
+    expect(await screen.findByText(/import your existing data/i)).toBeTruthy();
+
+    clickButton('Not now');
+
+    await waitFor(() =>
+      expect(screen.queryByText(/import your existing data/i)).toBeNull()
+    );
+    expect(localStorage.getItem(IMPORT_HANDLED_KEY)).toBe('1');
+    expect(store.importState).not.toHaveBeenCalled();
+  });
+
+  it('does not offer when remote already has data', async () => {
+    vi.mocked(store.fetchAll).mockResolvedValue({
+      ...structuredClone(REMOTE),
+      expenses: [SOME_EXPENSE],
+    });
+    vi.mocked(localStore.loadState).mockReturnValue(LOCAL_LEGACY_STATE);
+    localStorage.removeItem(IMPORT_HANDLED_KEY);
+
+    await renderReady();
+    expect(screen.queryByText(/import your existing data/i)).toBeNull();
   });
 });
