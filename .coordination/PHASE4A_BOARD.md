@@ -1,5 +1,7 @@
 # Phase 4a Task Board — AUTHORITATIVE claim surface for this phase
 
+**STATUS: CODE COMPLETE.** T1–T7 DONE, final whole-branch review passed with fixes applied (feature/phase4a @ 26fbb5f, 85/85 tests, typecheck+build clean). Remaining: T8 only (BLOCKED on user installing Docker Desktop + supabase CLI). Do NOT merge feature/phase4a to master until T8 passes.
+
 Plan: `docs/superpowers/plans/2026-07-19-phase4a-auth-persistence.md` (read its
 COORDINATION section before claiming). Spec: `docs/superpowers/specs/2026-07-19-phase4a-auth-persistence-spec.md`.
 
