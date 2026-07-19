@@ -5,7 +5,7 @@
  * No side effects; genId injectable for tests.
  */
 import { AppState, Expense, Friend, Group, Settlement } from '../types';
-import { ActivityEvent } from './activityLog';
+import type { ActivityEvent } from './activityLog';
 
 /** localStorage flag: import already offered/completed for this browser. */
 export const IMPORT_HANDLED_KEY = 'splitease.importHandled';
@@ -53,14 +53,16 @@ export function remapLocalState(
     splitWith: e.splitWith.map((s) => ({ ...s, userId: mapId(s.userId) })),
     groupId: mapGroupRef(e.groupId),
   }));
-  const settlements = state.settlements.map((s) => ({
+  const settlementsIn = state.settlements ?? [];
+  const activityEventsIn = state.activityEvents ?? [];
+  const settlements = settlementsIn.map((s) => ({
     ...s,
     id: mapId(s.id),
     fromUserId: mapId(s.fromUserId),
     toUserId: mapId(s.toUserId),
     groupId: mapGroupRef(s.groupId),
   }));
-  const activityEvents = state.activityEvents.map((ev) => ({
+  const activityEvents = activityEventsIn.map((ev) => ({
     ...ev,
     id: mapId(ev.id),
     actorId: mapId(ev.actorId),

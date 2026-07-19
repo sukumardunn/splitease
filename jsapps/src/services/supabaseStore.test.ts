@@ -39,6 +39,21 @@ describe('expense mapping', () => {
     expect(back).toEqual(expense);
   });
 
+  it('normalizes +00:00-form timestamps to Z-form ISO strings', () => {
+    const back = expenseFromRow(
+      {
+        ...expenseToRow(OWNER, expense).expense,
+        created_at: 'x',
+        date: '2026-01-01T00:00:00+00:00',
+        deleted_at: '2026-01-01T00:00:00+00:00',
+      } as never,
+      [],
+      []
+    );
+    expect(back.date).toBe('2026-01-01T00:00:00.000Z');
+    expect(back.deletedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
   it('maps empty payers to undefined and null notes to undefined', () => {
     const e: Expense = { ...expense, payers: undefined, notes: undefined };
     const bundle = expenseToRow(OWNER, e);
