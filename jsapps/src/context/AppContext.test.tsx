@@ -1,7 +1,63 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import { AppContextProvider, useAppContext } from './AppContext';
-import { loadState } from '../services/localStore';
+import { ToastProvider } from '../components/ui/Toast';
+
+vi.mock('../services/supabaseStore', () => ({
+  fetchAll: vi.fn(),
+  insertExpense: vi.fn().mockResolvedValue(undefined),
+  updateExpense: vi.fn().mockResolvedValue(undefined),
+  setExpenseDeleted: vi.fn().mockResolvedValue(undefined),
+  purgeExpense: vi.fn().mockResolvedValue(undefined),
+  insertGroup: vi.fn().mockResolvedValue(undefined),
+  updateGroup: vi.fn().mockResolvedValue(undefined),
+  setGroupDeleted: vi.fn().mockResolvedValue(undefined),
+  purgeGroup: vi.fn().mockResolvedValue(undefined),
+  insertSettlement: vi.fn().mockResolvedValue(undefined),
+  insertActivityEvent: vi.fn().mockResolvedValue(undefined),
+  importState: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('./AuthContext', () => ({
+  useAuth: () => ({
+    session: { user: { id: 'aaaaaaaa-0000-4000-8000-000000000001' } },
+    loading: false,
+    signUp: vi.fn(),
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+  }),
+}));
+
+import * as store from '../services/supabaseStore';
+
+const USER_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
+const FRIEND_ID = 'bbbbbbbb-0000-4000-8000-000000000001';
+
+function baseRemote(): store.RemoteState {
+  return {
+    currentUser: { id: USER_ID, name: 'Me', email: 'me@x.com', avatar: '' },
+    friends: [{ id: FRIEND_ID, name: 'Ana', email: 'a@x.com', avatar: '' }],
+    groups: [],
+    expenses: [
+      {
+        id: 'exp-seed-1',
+        description: 'Seed Rent',
+        amount: 100,
+        paidBy: USER_ID,
+        splitWith: [
+          { userId: USER_ID, amount: 50 },
+          { userId: FRIEND_ID, amount: 50 },
+        ],
+        date: new Date().toISOString(),
+        category: 'rent',
+        currency: 'USD',
+        groupId: null,
+        deletedAt: null,
+      },
+    ],
+    settlements: [],
+    activityEvents: [],
+  };
+}
 
 /** Test harness: exposes context actions/values through the DOM. */
 function Harness() {
@@ -11,7 +67,7 @@ function Harness() {
       <span data-testid="count">{expenses.length}</span>
       <span data-testid="top">{expenses[0]?.description ?? ''}</span>
       <span data-testid="bal-f1">
-        {getBalances().find((b) => b.friend?.id === 'friend1')?.balance ?? 0}
+        {getBalances().find((b) => b.friend?.id === friends[0]?.id)?.balance ?? 0}
       </span>
       <button
         onClick={() =>
@@ -35,72 +91,81 @@ function Harness() {
   );
 }
 
+function renderApp() {
+  return render(
+    <ToastProvider>
+      <AppContextProvider>
+        <Harness />
+      </AppContextProvider>
+    </ToastProvider>
+  );
+}
+
 describe('AppContext persistence integration', () => {
   beforeEach(() => {
-    localStorage.clear();
+    vi.mocked(store.fetchAll).mockResolvedValue(structuredClone(baseRemote()));
+    vi.mocked(store.insertExpense).mockResolvedValue(undefined);
   });
 
-  it('seeds from demo data on a fresh device and persists the seed', () => {
-    render(
-      <AppContextProvider>
-        <Harness />
-      </AppContextProvider>
-    );
-    // demo data has 6 expenses
-    expect(Number(screen.getByTestId('count').textContent)).toBe(6);
-    // the seed is written to storage
-    expect(loadState()).not.toBeNull();
+  it('loads remote state via fetchAll on mount', async () => {
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('1'));
+    expect(store.fetchAll).toHaveBeenCalledWith(USER_ID);
   });
 
-  it('persists a newly added expense to localStorage', () => {
-    render(
-      <AppContextProvider>
-        <Harness />
-      </AppContextProvider>
-    );
+  it('applies a newly added expense immediately and persists it via supabaseStore', async () => {
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('1'));
     act(() => {
       screen.getByText('add').click();
     });
     expect(screen.getByTestId('top').textContent).toBe('Test Coffee');
 
-    const persisted = loadState();
-    expect(persisted!.expenses[0].description).toBe('Test Coffee');
+    await waitFor(() =>
+      expect(store.insertExpense).toHaveBeenCalledWith(
+        USER_ID,
+        expect.objectContaining({ description: 'Test Coffee' })
+      )
+    );
   });
 
-  it('reloads persisted expenses in a fresh provider (survives "refresh")', () => {
+  it('reloads expenses added in a previous session on a fresh provider (remote is source of truth)', async () => {
+    // The remote is the persistence layer now, not localStorage: model that
+    // with a stateful fetchAll/insertExpense pair so a second mount ("refresh")
+    // observes what the first mount persisted.
+    let remoteExpenses = baseRemote().expenses;
+    vi.mocked(store.fetchAll).mockImplementation(async () => ({
+      ...structuredClone(baseRemote()),
+      expenses: structuredClone(remoteExpenses),
+    }));
+    vi.mocked(store.insertExpense).mockImplementation(async (_ownerId, expense) => {
+      remoteExpenses = [expense, ...remoteExpenses];
+    });
+
     // First mount: add an expense.
-    const first = render(
-      <AppContextProvider>
-        <Harness />
-      </AppContextProvider>
-    );
+    const first = renderApp();
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('1'));
     act(() => {
       screen.getByText('add').click();
     });
+    await waitFor(() => expect(store.insertExpense).toHaveBeenCalled());
     first.unmount();
 
-    // Second mount simulates a page reload: state comes from storage, not demo seed.
-    render(
-      <AppContextProvider>
-        <Harness />
-      </AppContextProvider>
-    );
+    // Second mount simulates a page reload: state comes from the remote fetch,
+    // not from any local cache.
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('2'));
     expect(screen.getByTestId('top').textContent).toBe('Test Coffee');
-    // 6 demo + 1 added
-    expect(Number(screen.getByTestId('count').textContent)).toBe(7);
   });
 
-  it('reflects who paid in computed balances', () => {
-    render(
-      <AppContextProvider>
-        <Harness />
-      </AppContextProvider>
-    );
+  it('reflects who paid in computed balances', async () => {
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId('count').textContent).toBe('1'));
     act(() => {
       screen.getByText('add').click();
     });
     // Current user paid; friend1 owes their 10 share -> balance increases by 10
-    // vs the demo baseline. Just assert it is a finite number and friend1 is present.
+    // vs the baseline. Just assert it is a finite number and friend1 is present.
     const bal = Number(screen.getByTestId('bal-f1').textContent);
     expect(Number.isFinite(bal)).toBe(true);
   });
