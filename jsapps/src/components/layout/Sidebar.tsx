@@ -1,10 +1,12 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, Receipt, UserPlus, PieChart, Activity, Trash2 } from 'lucide-react';
+import { Home, Users, Receipt, UserPlus, PieChart, Activity, Trash2, LogOut } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
-  
+  const { signOut } = useAuth();
+
   const isActive = (path: string) => {
     return location.pathname === path;
   };
@@ -40,7 +42,15 @@ const Sidebar: React.FC = () => {
         })}
       </nav>
       
-      <div className="p-4 border-t border-gray-200">
+      <div className="p-4 border-t border-gray-200 space-y-3">
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          className="flex items-center w-full px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors duration-200"
+        >
+          <LogOut className="h-5 w-5 mr-3 text-gray-500" />
+          <span className="font-medium">Log out</span>
+        </button>
         <div className="p-4 bg-teal-50 rounded-lg">
           <h3 className="text-sm font-medium text-teal-800 mb-2">Overall Balance</h3>
           <div className="flex justify-between items-center">
