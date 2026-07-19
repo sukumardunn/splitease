@@ -130,6 +130,10 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
    * entire prior state + toast on failure. The optional activity event is
    * persisted best-effort AFTER the primary write succeeds (its failure never
    * rolls back the primary mutation).
+   * Rollback restores a whole-state snapshot taken before this mutation, so it
+   * also discards any other optimistic mutation applied after that snapshot
+   * (accepted Phase-4a tradeoff; UI may diverge from the DB until the next
+   * refetch if that other mutation's own persist succeeded).
    */
   const mutate = (
     updater: (prev: AppState) => AppState,
@@ -415,9 +419,9 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     const candidate = importCandidate;
     if (!candidate) return;
     setImportBusy(true);
-    const remapped = remapLocalState(candidate, userId);
-    store
-      .importState(userId, remapped)
+    Promise.resolve()
+      .then(() => remapLocalState(candidate, userId))
+      .then((remapped) => store.importState(userId, remapped))
       .then(() => store.fetchAll(userId))
       .then((remote) => {
         applyState(remote);
