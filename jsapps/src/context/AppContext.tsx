@@ -23,6 +23,9 @@ import {
   appendActivityEvent,
   createActivityEvent,
 } from '../services/activityLog';
+import { loadState, clearState } from '../services/localStore';
+import { remapLocalState, IMPORT_HANDLED_KEY } from '../services/importRemapper';
+import ImportPrompt from '../components/import/ImportPrompt';
 
 interface AppContextType {
   currentUser: User;
@@ -82,6 +85,8 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
 
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [importCandidate, setImportCandidate] = useState<AppState | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
   // Mirror of `state` that updates synchronously inside mutators, so rapid
   // successive mutations snapshot/rollback correctly (no stale closures).
   const stateRef = useRef<AppState | null>(null);
@@ -98,7 +103,18 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     store
       .fetchAll(userId)
       .then((remote) => {
-        if (!cancelled) applyState(remote);
+        if (!cancelled) {
+          applyState(remote);
+          const remoteEmpty =
+            remote.friends.length === 0 &&
+            remote.groups.length === 0 &&
+            remote.expenses.length === 0 &&
+            remote.settlements.length === 0;
+          const local = loadState();
+          if (remoteEmpty && local && localStorage.getItem(IMPORT_HANDLED_KEY) !== '1') {
+            setImportCandidate(local);
+          }
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
@@ -395,6 +411,31 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     );
   };
 
+  const handleImport = () => {
+    const candidate = importCandidate;
+    if (!candidate) return;
+    setImportBusy(true);
+    const remapped = remapLocalState(candidate, userId);
+    store
+      .importState(userId, remapped)
+      .then(() => store.fetchAll(userId))
+      .then((remote) => {
+        applyState(remote);
+        localStorage.setItem(IMPORT_HANDLED_KEY, '1');
+        clearState();
+        setImportCandidate(null);
+      })
+      .catch((err: unknown) => {
+        console.warn('SplitEase: import failed', err);
+        showToast({ message: "Import failed — your local data is untouched. Try again later." });
+      })
+      .finally(() => setImportBusy(false));
+  };
+  const handleDismissImport = () => {
+    localStorage.setItem(IMPORT_HANDLED_KEY, '1');
+    setImportCandidate(null);
+  };
+
   if (loadError) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-gray-600 px-4">
@@ -488,5 +529,12 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     getGroupById,
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>
+      {importCandidate && (
+        <ImportPrompt busy={importBusy} onImport={handleImport} onDismiss={handleDismissImport} />
+      )}
+      {children}
+    </AppContext.Provider>
+  );
 };
