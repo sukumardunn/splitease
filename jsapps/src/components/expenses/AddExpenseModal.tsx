@@ -1,14 +1,27 @@
-import React, { useState } from 'react';
-import { X, DollarSign, Percent, DivideSquare, Users } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { X, DollarSign, Percent, DivideSquare, Hash, SlidersHorizontal } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import { ExpenseCategory } from '../../types';
+import {
+  resolveSplit,
+  validateSplits,
+  validatePayers,
+  SplitMode,
+  Payer,
+} from '../../services/splitEngine';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type SplitType = 'equal' | 'custom' | 'percentage';
+const SPLIT_MODES: { value: SplitMode; label: string; icon: React.ElementType }[] = [
+  { value: 'equal', label: 'Equal', icon: DivideSquare },
+  { value: 'exact', label: 'Exact ($)', icon: DollarSign },
+  { value: 'percentage', label: 'Percentage (%)', icon: Percent },
+  { value: 'shares', label: 'Shares', icon: Hash },
+  { value: 'adjustment', label: 'Adjustment (+/-)', icon: SlidersHorizontal },
+];
 
 const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) => {
   const { friends, groups, currentUser, addExpense } = useAppContext();
@@ -16,10 +29,12 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<ExpenseCategory>('other');
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [splitType, setSplitType] = useState<SplitType>('equal');
+  const [payerIds, setPayerIds] = useState<string[]>([currentUser.id]);
+  const [payerValues, setPayerValues] = useState<Record<string, string>>({});
+  const [splitMode, setSplitMode] = useState<SplitMode>('equal');
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
-  const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
-  
+  const [splitValues, setSplitValues] = useState<Record<string, string>>({});
+
   const categories: { value: ExpenseCategory; label: string }[] = [
     { value: 'groceries', label: 'Groceries' },
     { value: 'rent', label: 'Rent' },
@@ -33,59 +48,133 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
     { value: 'other', label: 'Other' },
   ];
 
+  const allPeople = useMemo(() => [currentUser, ...friends], [currentUser, friends]);
+  const participants = useMemo(
+    () => [currentUser.id, ...selectedFriends],
+    [currentUser.id, selectedFriends]
+  );
+  const totalAmount = parseFloat(amount) || 0;
+
+  const splitValuesNum: Record<string, number> = useMemo(() => {
+    const out: Record<string, number> = {};
+    participants.forEach((id) => {
+      out[id] = parseFloat(splitValues[id] || '0') || 0;
+    });
+    return out;
+  }, [participants, splitValues]);
+
+  const splits = useMemo(
+    () =>
+      resolveSplit({
+        totalAmount,
+        participants,
+        mode: splitMode,
+        values: splitValuesNum,
+      }),
+    [totalAmount, participants, splitMode, splitValuesNum]
+  );
+
+  const percentageSum = useMemo(
+    () => participants.reduce((sum, id) => sum + (splitValuesNum[id] || 0), 0),
+    [participants, splitValuesNum]
+  );
+
+  const splitValidation = useMemo(() => {
+    if (splitMode === 'equal') return { valid: true, sum: totalAmount, difference: 0 };
+    if (splitMode === 'percentage') {
+      return validateSplits(
+        100,
+        participants.map((id) => ({ userId: id, amount: splitValuesNum[id] || 0 }))
+      );
+    }
+    return validateSplits(totalAmount, splits);
+  }, [splitMode, participants, splitValuesNum, splits, totalAmount]);
+
+  const isSplitValid = splitMode === 'equal' || splitValidation.valid;
+
+  const payersList: Payer[] = useMemo(
+    () =>
+      payerIds.map((id) => ({
+        userId: id,
+        amount: parseFloat(payerValues[id] || '0') || 0,
+      })),
+    [payerIds, payerValues]
+  );
+
+  const payerValidation = useMemo(
+    () => (payerIds.length > 1 ? validatePayers(totalAmount, payersList) : null),
+    [payerIds, payersList, totalAmount]
+  );
+
+  const isPayersValid = payerIds.length > 0 && (payerIds.length === 1 || !!payerValidation?.valid);
+
+  const canSubmit =
+    description.trim().length > 0 && totalAmount > 0 && isSplitValid && isPayersValid;
+
+  const togglePayer = (userId: string, checked: boolean) => {
+    if (checked) {
+      setPayerIds((prev) => [...prev, userId]);
+    } else {
+      setPayerIds((prev) => {
+        const next = prev.filter((id) => id !== userId);
+        return next.length > 0 ? next : prev;
+      });
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const totalAmount = parseFloat(amount);
+
     if (isNaN(totalAmount) || totalAmount <= 0) return;
-    
-    let splits = [];
-    const participants = [currentUser.id, ...selectedFriends];
-    
-    if (splitType === 'equal') {
-      const splitAmount = totalAmount / participants.length;
-      splits = participants.map(id => ({
-        userId: id,
-        amount: splitAmount
-      }));
-    } else if (splitType === 'percentage') {
-      splits = participants.map(id => ({
-        userId: id,
-        amount: (parseFloat(customSplits[id] || '0') / 100) * totalAmount
-      }));
-    } else {
-      splits = participants.map(id => ({
-        userId: id,
-        amount: parseFloat(customSplits[id] || '0')
-      }));
-    }
-    
+    if (!isSplitValid || !isPayersValid) return;
+
+    const paidBy = payerIds[0];
+    const payers = payerIds.length > 1 ? payersList : undefined;
+
     addExpense({
       description,
       amount: totalAmount,
-      paidBy: currentUser.id,
+      paidBy,
+      payers,
       splitWith: splits,
       category,
       currency: 'USD',
-      groupId: selectedGroup
+      groupId: selectedGroup,
     });
-    
+
     onClose();
     resetForm();
   };
-  
+
   const resetForm = () => {
     setDescription('');
     setAmount('');
     setCategory('other');
     setSelectedGroup(null);
-    setSplitType('equal');
+    setPayerIds([currentUser.id]);
+    setPayerValues({});
+    setSplitMode('equal');
     setSelectedFriends([]);
-    setCustomSplits({});
+    setSplitValues({});
   };
-  
+
   if (!isOpen) return null;
-  
+
+  const splitUnitLabel = (mode: SplitMode): string => {
+    switch (mode) {
+      case 'exact':
+        return '$';
+      case 'percentage':
+        return '%';
+      case 'shares':
+        return 'shares';
+      case 'adjustment':
+        return '+/-';
+      default:
+        return '';
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -100,7 +189,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
             </button>
           </div>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           <div className="space-y-4">
             <div>
@@ -116,7 +205,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                 required
               />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Amount
@@ -137,7 +226,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                 />
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Category
@@ -154,7 +243,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                 ))}
               </select>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Group (Optional)
@@ -172,58 +261,127 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                 ))}
               </select>
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Paid by
+              </label>
+              <div className="space-y-2">
+                {allPeople.map((person) => {
+                  const checked = payerIds.includes(person.id);
+                  return (
+                    <div
+                      key={person.id}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                    >
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id={`payer-${person.id}`}
+                          checked={checked}
+                          onChange={(e) => togglePayer(person.id, e.target.checked)}
+                          className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                        />
+                        <label htmlFor={`payer-${person.id}`} className="ml-3 flex items-center">
+                          <img
+                            src={person.avatar}
+                            alt={person.name}
+                            className="h-8 w-8 rounded-full object-cover"
+                          />
+                          <span className="ml-2 font-medium text-gray-700">
+                            {person.id === currentUser.id ? `${person.name} (You)` : person.name}
+                          </span>
+                        </label>
+                      </div>
+
+                      {checked && payerIds.length > 1 && (
+                        <div className="flex items-center">
+                          <span className="mr-2">$</span>
+                          <input
+                            type="number"
+                            value={payerValues[person.id] || ''}
+                            onChange={(e) =>
+                              setPayerValues({ ...payerValues, [person.id]: e.target.value })
+                            }
+                            className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500"
+                            placeholder="0.00"
+                            step="0.01"
+                            min="0"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {payerIds.length > 1 && payerValidation && (
+                <p
+                  className={`mt-2 text-sm ${
+                    payerValidation.valid ? 'text-green-600' : 'text-red-600'
+                  }`}
+                >
+                  Σ ${payerValidation.sum.toFixed(2)} / ${totalAmount.toFixed(2)}
+                  {payerValidation.message ? ` — ${payerValidation.message}` : ''}
+                </p>
+              )}
+            </div>
           </div>
-          
+
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Split Details</h3>
-            
+
             <div className="space-y-4">
-              <div className="flex space-x-4">
-                <button
-                  type="button"
-                  onClick={() => setSplitType('equal')}
-                  className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
-                    splitType === 'equal'
-                      ? 'border-teal-500 bg-teal-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <DivideSquare className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm font-medium">Equal Split</span>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => setSplitType('custom')}
-                  className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
-                    splitType === 'custom'
-                      ? 'border-teal-500 bg-teal-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <DollarSign className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm font-medium">Custom Amounts</span>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => setSplitType('percentage')}
-                  className={`flex-1 p-4 rounded-lg border-2 transition-colors ${
-                    splitType === 'percentage'
-                      ? 'border-teal-500 bg-teal-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <Percent className="h-6 w-6 mx-auto mb-2 text-teal-600" />
-                  <span className="block text-sm font-medium">Percentages</span>
-                </button>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {SPLIT_MODES.map(({ value, label, icon: Icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSplitMode(value)}
+                    className={`p-3 rounded-lg border-2 transition-colors ${
+                      splitMode === value
+                        ? 'border-teal-500 bg-teal-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5 mx-auto mb-1 text-teal-600" />
+                    <span className="block text-xs font-medium">{label}</span>
+                  </button>
+                ))}
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Split with
                 </label>
                 <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center">
+                      <img
+                        src={currentUser.avatar}
+                        alt={currentUser.name}
+                        className="h-8 w-8 rounded-full object-cover"
+                      />
+                      <span className="ml-2 font-medium text-gray-700">
+                        {currentUser.name} (You)
+                      </span>
+                    </div>
+                    {splitMode !== 'equal' && (
+                      <div className="flex items-center">
+                        <span className="mr-2">{splitUnitLabel(splitMode)}</span>
+                        <input
+                          type="number"
+                          value={splitValues[currentUser.id] || ''}
+                          onChange={(e) =>
+                            setSplitValues({ ...splitValues, [currentUser.id]: e.target.value })
+                          }
+                          className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500"
+                          placeholder="0"
+                          step={splitMode === 'percentage' ? '1' : '0.01'}
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {friends.map((friend) => (
                     <div key={friend.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex items-center">
@@ -234,19 +392,11 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                           onChange={(e) => {
                             if (e.target.checked) {
                               setSelectedFriends([...selectedFriends, friend.id]);
-                              if (splitType !== 'equal') {
-                                setCustomSplits(prev => ({
-                                  ...prev,
-                                  [friend.id]: splitType === 'percentage' ? '0' : '0.00'
-                                }));
-                              }
                             } else {
-                              setSelectedFriends(selectedFriends.filter(id => id !== friend.id));
-                              if (splitType !== 'equal') {
-                                const newSplits = { ...customSplits };
-                                delete newSplits[friend.id];
-                                setCustomSplits(newSplits);
-                              }
+                              setSelectedFriends(selectedFriends.filter((id) => id !== friend.id));
+                              const newSplits = { ...splitValues };
+                              delete newSplits[friend.id];
+                              setSplitValues(newSplits);
                             }
                           }}
                           className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
@@ -260,25 +410,22 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                           <span className="ml-2 font-medium text-gray-700">{friend.name}</span>
                         </label>
                       </div>
-                      
-                      {selectedFriends.includes(friend.id) && splitType !== 'equal' && (
+
+                      {selectedFriends.includes(friend.id) && splitMode !== 'equal' && (
                         <div className="flex items-center">
-                          {splitType === 'percentage' && <span className="mr-2">%</span>}
-                          {splitType === 'custom' && <span className="mr-2">$</span>}
+                          <span className="mr-2">{splitUnitLabel(splitMode)}</span>
                           <input
                             type="number"
-                            value={customSplits[friend.id] || ''}
+                            value={splitValues[friend.id] || ''}
                             onChange={(e) => {
-                              setCustomSplits({
-                                ...customSplits,
-                                [friend.id]: e.target.value
+                              setSplitValues({
+                                ...splitValues,
+                                [friend.id]: e.target.value,
                               });
                             }}
                             className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-teal-500 focus:border-teal-500"
-                            placeholder={splitType === 'percentage' ? '0' : '0.00'}
-                            step={splitType === 'percentage' ? '1' : '0.01'}
-                            min="0"
-                            max={splitType === 'percentage' ? '100' : undefined}
+                            placeholder="0"
+                            step={splitMode === 'percentage' ? '1' : '0.01'}
                           />
                         </div>
                       )}
@@ -286,9 +433,18 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   ))}
                 </div>
               </div>
+
+              {splitMode !== 'equal' && (
+                <p className={`text-sm ${isSplitValid ? 'text-green-600' : 'text-red-600'}`}>
+                  {splitMode === 'percentage'
+                    ? `Σ ${percentageSum.toFixed(2)}% / 100%`
+                    : `Σ $${splitValidation.sum.toFixed(2)} / $${totalAmount.toFixed(2)}`}
+                  {!isSplitValid && splitValidation.message ? ` — ${splitValidation.message}` : ''}
+                </p>
+              )}
             </div>
           </div>
-          
+
           <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
             <button
               type="button"
@@ -299,7 +455,8 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors"
+              disabled={!canSubmit}
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Add Expense
             </button>
