@@ -366,3 +366,28 @@ export function simplifyDebts(netByUser: Record<string, number>): Transfer[] {
 
   return transfers;
 }
+
+/** Totals across per-friend balances, from the current user's point of view. */
+export interface BalanceTotals {
+  /** Sum of everything friends owe the user. */
+  totalOwed: number;
+  /** Sum of everything the user owes friends, as a positive number. */
+  totalOwe: number;
+}
+
+/**
+ * Split per-friend balances into the two headline figures.
+ *
+ * Shared by the Dashboard cards and the sidebar summary so the two can't drift.
+ * Deliberately keeps the sums separate rather than netting them: "you are owed
+ * $50 and owe $50" is a different situation from "you are settled up".
+ */
+export function summarizeBalances(balances: { balance: number }[]): BalanceTotals {
+  let totalOwed = 0;
+  let totalOwe = 0;
+  for (const { balance } of balances) {
+    if (balance > 0) totalOwed += balance;
+    else if (balance < 0) totalOwe += Math.abs(balance);
+  }
+  return { totalOwed: roundToCents(totalOwed), totalOwe: roundToCents(totalOwe) };
+}
