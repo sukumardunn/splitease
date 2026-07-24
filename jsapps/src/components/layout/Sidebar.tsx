@@ -2,10 +2,15 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Users, Receipt, UserPlus, PieChart, Activity, Trash2, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useAppContext } from '../../context/AppContext';
+import { summarizeBalances } from '../../services/splitEngine';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { signOut } = useAuth();
+  const { getBalances } = useAppContext();
+  const { totalOwed, totalOwe } = summarizeBalances(getBalances());
+  const settledUp = totalOwed === 0 && totalOwe === 0;
 
   const isActive = (path: string) => {
     return location.pathname === path;
@@ -54,11 +59,27 @@ const Sidebar: React.FC = () => {
         <div className="p-4 bg-teal-50 rounded-lg">
           <h3 className="text-sm font-medium text-teal-800 mb-2">Overall Balance</h3>
           <div className="flex justify-between items-center">
-            <div>
-              <p className="text-sm text-gray-500">You are owed</p>
-              <p className="text-lg font-semibold text-green-600">$355.00</p>
-            </div>
-            <PieChart className="h-10 w-10 text-teal-500" />
+            {settledUp ? (
+              <p className="text-sm text-gray-500">You're all settled up!</p>
+            ) : (
+              <div className="space-y-1">
+                {totalOwed > 0 && (
+                  <div>
+                    <p className="text-sm text-gray-500">You are owed</p>
+                    <p className="text-lg font-semibold text-green-600">
+                      ${totalOwed.toFixed(2)}
+                    </p>
+                  </div>
+                )}
+                {totalOwe > 0 && (
+                  <div>
+                    <p className="text-sm text-gray-500">You owe</p>
+                    <p className="text-lg font-semibold text-red-600">${totalOwe.toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+            <PieChart className="h-10 w-10 text-teal-500 shrink-0" />
           </div>
         </div>
       </div>
