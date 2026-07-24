@@ -18,9 +18,16 @@ vi.mock('../services/supabaseStore', () => ({
   insertActivityEvent: vi.fn().mockResolvedValue(undefined),
   importState: vi.fn().mockResolvedValue(undefined),
 }));
+// Mutable so a test can sign the user out mid-flight. `vi.hoisted` runs before
+// the hoisted `vi.mock` factory, so the factory can safely close over it.
+const authState = vi.hoisted(() => ({
+  session: { user: { id: 'aaaaaaaa-0000-4000-8000-000000000001' } } as {
+    user: { id: string };
+  } | null,
+}));
 vi.mock('./AuthContext', () => ({
   useAuth: () => ({
-    session: { user: { id: 'aaaaaaaa-0000-4000-8000-000000000001' } },
+    session: authState.session,
     loading: false,
     signUp: vi.fn(),
     signIn: vi.fn(),
@@ -184,8 +191,11 @@ const SOME_EXPENSE = {
   deletedAt: null,
 };
 
+const SIGNED_IN = { user: { id: 'aaaaaaaa-0000-4000-8000-000000000001' } };
+
 describe('AppContext Phase 2/3 behaviour', () => {
   beforeEach(() => {
+    authState.session = SIGNED_IN;
     vi.mocked(store.fetchAll).mockResolvedValue(structuredClone(REMOTE));
   });
 
@@ -247,6 +257,46 @@ describe('AppContext Phase 2/3 behaviour', () => {
       expect.any(Error)
     );
   });
+
+  it('rolls back silently when the user signed out before the write failed', async () => {
+    // Regression guard for backlog item 3. ToastProvider sits above the auth
+    // gate, so it outlives AppContextProvider on sign-out — without the
+    // signed-out check the rollback toast landed on the login screen.
+    const warn = captureConsoleWarn();
+    let rejectPersist: (err: Error) => void = () => {};
+    vi.mocked(store.insertExpense).mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectPersist = reject;
+      })
+    );
+
+    const { rerender } = await renderReady();
+    click('add');
+    expect(screen.getByTestId('top').textContent).toBe('Coffee');
+
+    // The user signs out while the write is still in flight.
+    authState.session = null;
+    rerender(
+      <ToastProvider>
+        <AppContextProvider>
+          <Harness />
+        </AppContextProvider>
+      </ToastProvider>
+    );
+
+    await act(async () => {
+      rejectPersist(new Error('down'));
+      await Promise.resolve();
+    });
+
+    // Still rolled back — just without shouting about it.
+    await waitFor(() => expect(num('active')).toBe(0));
+    expect(screen.queryByText(/Couldn.t save your change/)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('persist failed'),
+      expect.any(Error)
+    );
+  });
 });
 
 /**
@@ -256,6 +306,7 @@ describe('AppContext Phase 2/3 behaviour', () => {
  */
 describe('AppContext one-time import', () => {
   beforeEach(() => {
+    authState.session = SIGNED_IN;
     vi.clearAllMocks();
     localStorage.clear();
     vi.mocked(store.fetchAll).mockResolvedValue(structuredClone(REMOTE));
