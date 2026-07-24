@@ -19,14 +19,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    let cancelled = false;
+
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          // A recoverable read failure (e.g. a corrupt stored token). Treat it
+          // as signed-out rather than trusting a half-read session.
+          console.warn('SplitEase: could not read the stored session', error);
+        }
+        setSession(data.session);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Without this catch a rejection here left `loading` true forever, so the
+        // app sat on the loading screen with no way forward (and the rejection
+        // went unhandled). Fall back to signed-out so the login form renders.
+        console.warn('SplitEase: session bootstrap failed', err);
+        setSession(null);
+        setLoading(false);
+      });
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+      if (cancelled) return;
       setSession(next);
     });
-    return () => sub.subscription.unsubscribe();
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const signUp = async (name: string, email: string, password: string) => {
@@ -44,8 +69,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    clearState(); // remote is the source of truth; drop any stale local envelope
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      // Don't let a network hiccup strand the caller (Sidebar fires this and
+      // ignores the result); onAuthStateChange still drives the UI.
+      console.warn('SplitEase: sign-out request failed', err);
+    } finally {
+      clearState(); // remote is the source of truth; drop any stale local envelope
+    }
   };
 
   return (

@@ -4,6 +4,10 @@ import { useAuth } from '../../context/AuthContext';
 
 type Mode = 'signin' | 'signup';
 
+const LABEL_CLASS = 'block text-sm font-medium text-gray-700 mb-1';
+const INPUT_CLASS =
+  'w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500';
+
 const AuthScreen: React.FC = () => {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<Mode>('signin');
@@ -38,32 +42,59 @@ const AuthScreen: React.FC = () => {
         </h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'signup' && (
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
+            <div>
+              <label htmlFor="auth-name" className={LABEL_CLASS}>
+                Your name
+              </label>
+              <input
+                id="auth-name"
+                name="name"
+                type="text"
+                required
+                autoComplete="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={INPUT_CLASS}
+              />
+            </div>
           )}
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email"
-            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
-          />
-          <input
-            type="password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password (min 6 characters)"
-            className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500"
-          />
+          <div>
+            <label htmlFor="auth-email" className={LABEL_CLASS}>
+              Email
+            </label>
+            <input
+              id="auth-email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label htmlFor="auth-password" className={LABEL_CLASS}>
+              Password
+            </label>
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              required
+              minLength={6}
+              // Tells a password manager whether to offer a saved password or
+              // generate a new one.
+              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              aria-describedby="auth-password-hint"
+              className={INPUT_CLASS}
+            />
+            <p id="auth-password-hint" className="mt-1 text-xs text-gray-500">
+              At least 6 characters
+            </p>
+          </div>
           {error && (
             <p role="alert" className="text-sm text-red-600">
               {error}
@@ -72,9 +103,10 @@ const AuthScreen: React.FC = () => {
           <button
             type="submit"
             disabled={busy}
+            aria-busy={busy}
             className="w-full flex items-center justify-center bg-teal-500 hover:bg-teal-600 disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors"
           >
-            {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            {busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin mr-2" />}
             {mode === 'signin' ? 'Log in' : 'Sign up'}
           </button>
         </form>

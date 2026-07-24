@@ -6,6 +6,7 @@ import {
   computeNetBalances,
   computeAbsoluteNet,
   simplifyDebts,
+  summarizeBalances,
   BalanceExpense,
 } from './splitEngine';
 
@@ -446,5 +447,37 @@ describe('computeAbsoluteNet + simplifyDebts round-trip', () => {
 
   it('produces no transfers when everyone is settled', () => {
     expect(simplifyDebts({ a: 0, b: 0, c: 0 })).toEqual([]);
+  });
+});
+
+describe('summarizeBalances', () => {
+  it('splits positives and negatives into owed / owe', () => {
+    expect(summarizeBalances([{ balance: 30 }, { balance: -12.5 }, { balance: 7.25 }])).toEqual({
+      totalOwed: 37.25,
+      totalOwe: 12.5,
+    });
+  });
+
+  it('reports zeros when there are no balances at all', () => {
+    expect(summarizeBalances([])).toEqual({ totalOwed: 0, totalOwe: 0 });
+  });
+
+  it('reports zeros when every balance is settled', () => {
+    expect(summarizeBalances([{ balance: 0 }, { balance: 0 }])).toEqual({
+      totalOwed: 0,
+      totalOwe: 0,
+    });
+  });
+
+  it('keeps the two sides separate rather than netting them', () => {
+    // Owing $50 and being owed $50 is not the same as being settled up.
+    expect(summarizeBalances([{ balance: 50 }, { balance: -50 }])).toEqual({
+      totalOwed: 50,
+      totalOwe: 50,
+    });
+  });
+
+  it('rounds accumulated float error to cents', () => {
+    expect(summarizeBalances([{ balance: 0.1 }, { balance: 0.2 }]).totalOwed).toBe(0.3);
   });
 });
