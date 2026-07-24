@@ -5,6 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import ExpenseItem from '../components/expenses/ExpenseItem';
 import BalanceSummary from '../components/dashboard/BalanceSummary';
 import AddExpenseModal from '../components/expenses/AddExpenseModal';
+import { summarizeBalances } from '../services/splitEngine';
 
 const Dashboard: React.FC = () => {
   const { expenses, getBalances } = useAppContext();
@@ -17,16 +18,10 @@ const Dashboard: React.FC = () => {
   
   // Get balances
   const balances = getBalances();
-  
-  // Calculate total balance
-  const totalOwed = balances
-    .filter((b) => b.balance > 0)
-    .reduce((sum, b) => sum + b.balance, 0);
-  
-  const totalOwe = balances
-    .filter((b) => b.balance < 0)
-    .reduce((sum, b) => sum + Math.abs(b.balance), 0);
-  
+
+  // Calculate total balance (shared with the sidebar summary)
+  const { totalOwed, totalOwe } = summarizeBalances(balances);
+
   return (
     <div className="space-y-6 pb-16 md:pb-0">
       <div className="flex justify-between items-center">
