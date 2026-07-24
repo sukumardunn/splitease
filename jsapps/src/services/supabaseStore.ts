@@ -6,8 +6,9 @@
  */
 import { supabase } from '../lib/supabase';
 import type { Database, Json } from '../lib/database.types';
-import { ActivityAction, ActivityEntityType, ActivityEvent } from './activityLog';
-import { Expense, ExpenseCategory, Friend, Group, Settlement, User } from '../types';
+import { ActivityEvent } from './activityLog';
+import { toActivityAction, toActivityEntityType, toExpenseCategory } from './dbValidation';
+import { Expense, Friend, Group, Settlement, User } from '../types';
 
 type Tables = Database['public']['Tables'];
 type ProfileRow = Tables['profiles']['Row'];
@@ -93,7 +94,7 @@ export function expenseFromRow(
         : undefined,
     splitWith: splitRows.map((s) => ({ userId: s.person_id, amount: Number(s.amount) })),
     date: new Date(row.date).toISOString(),
-    category: row.category as ExpenseCategory,
+    category: toExpenseCategory(row.category),
     currency: row.currency,
     groupId: row.group_id,
     deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
@@ -145,8 +146,8 @@ export function activityEventFromRow(row: ActivityEventRow): ActivityEvent {
   return {
     id: row.id,
     actorId: row.actor_id,
-    action: row.action as ActivityAction,
-    entityType: row.entity_type as ActivityEntityType,
+    action: toActivityAction(row.action),
+    entityType: toActivityEntityType(row.entity_type),
     entityId: row.entity_id,
     groupId: row.group_id,
     before: row.before,
@@ -159,6 +160,30 @@ export function activityEventFromRow(row: ActivityEventRow): ActivityEvent {
 
 function fail(context: string, message: string): never {
   throw new Error(`${context}: ${message}`);
+}
+
+/**
+ * Await a write that must touch at least one row; throw if it touched none.
+ *
+ * An UPDATE or DELETE whose WHERE clause matches nothing is a *success* in
+ * Postgres, and RLS makes non-owned rows invisible rather than an error — so a
+ * write silently rejected by policy is indistinguishable from one that worked
+ * unless we ask the DB which rows it actually changed. Appending `.select()`
+ * makes it return them, turning a silent no-op into a thrown error that
+ * AppContext rolls back and surfaces as a toast.
+ *
+ * Plain INSERTs don't need this: an RLS `with check` violation raises 42501,
+ * which the existing `error` checks already catch.
+ */
+async function expectRowsAffected(
+  context: string,
+  query: PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>
+): Promise<void> {
+  const { data, error } = await query;
+  if (error) fail(context, error.message);
+  if (!data || data.length === 0) {
+    fail(context, 'no rows affected — row is missing or not permitted by row-level security');
+  }
 }
 
 // ---------- reads ----------
@@ -248,8 +273,12 @@ export async function insertExpense(ownerId: string, e: Expense): Promise<void> 
 
 export async function updateExpense(ownerId: string, e: Expense): Promise<void> {
   const bundle = expenseToRow(ownerId, e);
-  const { error } = await supabase.from('expenses').upsert(bundle.expense);
-  if (error) fail('update expense', error.message);
+  await expectRowsAffected(
+    'update expense',
+    supabase.from('expenses').upsert(bundle.expense).select('id')
+  );
+  // The child deletes below may legitimately affect zero rows (an expense with
+  // no recorded payers), so they are not row-count checked.
   const del1 = await supabase.from('expense_payers').delete().eq('expense_id', e.id);
   if (del1.error) fail('replace expense_payers', del1.error.message);
   const del2 = await supabase.from('expense_splits').delete().eq('expense_id', e.id);
@@ -258,13 +287,17 @@ export async function updateExpense(ownerId: string, e: Expense): Promise<void> 
 }
 
 export async function setExpenseDeleted(id: string, deletedAt: string | null): Promise<void> {
-  const { error } = await supabase.from('expenses').update({ deleted_at: deletedAt }).eq('id', id);
-  if (error) fail('set expense deleted', error.message);
+  await expectRowsAffected(
+    'set expense deleted',
+    supabase.from('expenses').update({ deleted_at: deletedAt }).eq('id', id).select('id')
+  );
 }
 
 export async function purgeExpense(id: string): Promise<void> {
-  const { error } = await supabase.from('expenses').delete().eq('id', id);
-  if (error) fail('purge expense', error.message);
+  await expectRowsAffected(
+    'purge expense',
+    supabase.from('expenses').delete().eq('id', id).select('id')
+  );
 }
 
 // ---------- group writes ----------
@@ -281,8 +314,11 @@ export async function insertGroup(ownerId: string, g: Group): Promise<void> {
 
 export async function updateGroup(ownerId: string, g: Group): Promise<void> {
   const bundle = groupToRow(ownerId, g);
-  const { error } = await supabase.from('groups').upsert(bundle.group);
-  if (error) fail('update group', error.message);
+  await expectRowsAffected(
+    'update group',
+    supabase.from('groups').upsert(bundle.group).select('id')
+  );
+  // May legitimately affect zero rows (a group with no members yet).
   const del = await supabase.from('group_members').delete().eq('group_id', g.id);
   if (del.error) fail('replace group_members', del.error.message);
   if (bundle.members.length > 0) {
@@ -292,13 +328,17 @@ export async function updateGroup(ownerId: string, g: Group): Promise<void> {
 }
 
 export async function setGroupDeleted(id: string, deletedAt: string | null): Promise<void> {
-  const { error } = await supabase.from('groups').update({ deleted_at: deletedAt }).eq('id', id);
-  if (error) fail('set group deleted', error.message);
+  await expectRowsAffected(
+    'set group deleted',
+    supabase.from('groups').update({ deleted_at: deletedAt }).eq('id', id).select('id')
+  );
 }
 
 export async function purgeGroup(id: string): Promise<void> {
-  const { error } = await supabase.from('groups').delete().eq('id', id);
-  if (error) fail('purge group', error.message);
+  await expectRowsAffected(
+    'purge group',
+    supabase.from('groups').delete().eq('id', id).select('id')
+  );
 }
 
 // ---------- settlements / activity ----------
