@@ -1,5 +1,12 @@
 # Phase 4a — Auth + Core Persistence Implementation Plan
 
+> **⚠️ T8 UPDATE (2026-07-24, agent5):** T8 is now executed via a **Docker-free
+> hosted-cloud path** (the machine's Docker install kept failing). The active,
+> authoritative T8 plan is `~/.claude/plans/composed-zooming-alpaca.md` — it
+> supersedes the local-Docker "Node 20 + `supabase start`" T8 checklist below.
+> Migration is applied via the hosted project's SQL editor; §9 acceptance runs
+> against the cloud DB. Node v26 is used (Node 20 fallback only).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Email+password auth and owner-scoped Postgres persistence (local Supabase) behind the unchanged `AppContextType` seam, with optimistic-online mutations and one-time localStorage import.
