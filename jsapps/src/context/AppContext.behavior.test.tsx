@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { AppContextProvider, useAppContext } from './AppContext';
 import { ToastProvider } from '../components/ui/Toast';
+import { captureConsoleWarn } from '../test/console';
 
 vi.mock('../services/supabaseStore', () => ({
   fetchAll: vi.fn(),
@@ -233,6 +234,7 @@ describe('AppContext Phase 2/3 behaviour', () => {
   });
 
   it('rolls back the expense and shows a toast when persist rejects', async () => {
+    const warn = captureConsoleWarn();
     vi.mocked(store.insertExpense).mockRejectedValueOnce(new Error('down'));
     await renderReady();
     click('add');
@@ -240,6 +242,10 @@ describe('AppContext Phase 2/3 behaviour', () => {
     expect(screen.getByTestId('top').textContent).toBe('Coffee');
     await waitFor(() => expect(num('active')).toBe(0));
     expect(screen.getByText(/Couldn.t save your change/)).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('persist failed'),
+      expect.any(Error)
+    );
   });
 });
 
