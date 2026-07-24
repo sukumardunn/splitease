@@ -140,5 +140,8 @@ Full gate before any merge: `npm test && npm run typecheck && npm run build && n
 - **Sidebar "Overall Balance" is hardcoded** — `jsapps/src/components/layout/Sidebar.tsx:59`
   renders a static `$355.00` instead of deriving from state. Pre-existing
   (predates Phase 4a), cosmetic, deferred to Phase 4b.
-- Other deferred Phase 4b items are listed in
-  [`.superpowers/sdd/progress.md`](.superpowers/sdd/progress.md).
+- Other deferred Phase 4b items — silent no-op writes, `activity_events` RLS
+  tightening, AuthScreen a11y, and more — are listed in
+  [`docs/PHASE4B_BACKLOG.md`](docs/PHASE4B_BACKLOG.md). (The working copy in
+  `.superpowers/sdd/progress.md` is git-excluded and machine-local; the backlog
+  doc is the durable record.)
