@@ -37,12 +37,10 @@ multi-agent coordination rules (ledger claims, heartbeats, stale-claim recovery)
 
 ### 1. Prerequisites
 
-- **Node 20** — required to run the test suite. `jsdom` crashes under Node 26, so
-  run `npm test` under Node 20:
-  ```bash
-  source ~/.nvm/nvm.sh && nvm use 20
-  ```
-  `npm run build`, `typecheck`, and `lint` are fine on Node 20 **or** 26.
+- **Node 20 or newer** — every script (`test`, `build`, `typecheck`, `lint`) runs
+  on Node 20 and Node 26 alike. The suite used to require Node 20 because
+  `localStorage` was `undefined` on newer Node; `jsapps/src/test/setup.ts` fixes
+  that (see [`docs/PHASE4B_BACKLOG.md`](docs/PHASE4B_BACKLOG.md) item 12).
 - A **Supabase project** — either hosted (supabase.com, no Docker needed) or local
   via the `supabase` CLI + Docker Desktop.
 
@@ -114,7 +112,7 @@ All run from `jsapps/`:
 | Command             | What it does                                      |
 |---------------------|---------------------------------------------------|
 | `npm run dev`       | Vite dev server                                   |
-| `npm test`          | Vitest suite (**Node 20 only**)                   |
+| `npm test`          | Vitest suite                                      |
 | `npm run typecheck` | `tsc --noEmit`                                    |
 | `npm run build`     | typecheck + production build                      |
 | `npm run lint`      | ESLint                                            |
@@ -137,11 +135,17 @@ Full gate before any merge: `npm test && npm run typecheck && npm run build && n
 
 ## Known issues
 
-- **Sidebar "Overall Balance" is hardcoded** — `jsapps/src/components/layout/Sidebar.tsx:59`
-  renders a static `$355.00` instead of deriving from state. Pre-existing
-  (predates Phase 4a), cosmetic, deferred to Phase 4b.
-- Other deferred Phase 4b items — silent no-op writes, `activity_events` RLS
-  tightening, AuthScreen a11y, and more — are listed in
-  [`docs/PHASE4B_BACKLOG.md`](docs/PHASE4B_BACKLOG.md). (The working copy in
-  `.superpowers/sdd/progress.md` is git-excluded and machine-local; the backlog
-  doc is the durable record.)
+- **Pending migration:** Phase 4b's `activity_events` append-only policy
+  (`supabase/migrations/20260724000001_…`) still needs to be run against the
+  hosted database. Until it is, the audit log remains editable by its owner.
+- **Whole-state rollback granularity** — a failed write restores the entire state
+  snapshot, discarding any concurrent in-flight optimistic update. A spec'd
+  Phase-4a tradeoff, commented in `AppContext.tsx`; fixing it needs a real
+  concurrency model, so it's the one open Phase 4b item.
+
+Everything else from the Phase 4b list — silent no-op writes, session-bootstrap
+hardening, DB union validation, AuthScreen a11y, the import-modal focus trap, the
+sidebar balance, and the Node-version test split — is now fixed; see
+[`docs/PHASE4B_BACKLOG.md`](docs/PHASE4B_BACKLOG.md) for per-item detail and
+commits. (The working copy in `.superpowers/sdd/progress.md` is git-excluded and
+machine-local; the backlog doc is the durable record.)
