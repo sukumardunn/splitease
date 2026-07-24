@@ -16,9 +16,18 @@ export type ActivityAction =
   | 'group.delete'
   | 'group.restore'
   | 'settlement.create'
-  | 'friend.add';
+  | 'friend.add'
+  /** Persisted row carried a value this client doesn't recognize. Never
+   *  produced by app code — only by `dbValidation` when reading the DB. */
+  | 'unknown';
 
-export type ActivityEntityType = 'expense' | 'group' | 'settlement' | 'friend';
+export type ActivityEntityType =
+  | 'expense'
+  | 'group'
+  | 'settlement'
+  | 'friend'
+  /** See the note on ActivityAction's 'unknown'. */
+  | 'unknown';
 
 export interface ActivityEvent {
   id: string;
@@ -229,6 +238,15 @@ export function describeActivity(
       return {
         title: `${actor} added ${nameOf(friendId)} as a friend`,
         tone: 'friend',
+      };
+    }
+    case 'unknown': {
+      // A persisted action this client version doesn't know. Surfaced rather
+      // than hidden so the audit trail stays complete.
+      return {
+        title: `${actor} performed an unrecognized action`,
+        subtitle: event.entityId,
+        tone: 'expense',
       };
     }
     default: {
