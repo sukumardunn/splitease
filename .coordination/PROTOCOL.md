@@ -11,6 +11,21 @@ relies on three things: a shared ledger, per-agent git branches, and heartbeats.
 
 ---
 
+## 0. Base branch (read this first)
+
+**`claude-driven-changes` is the working line.** Cut every agent branch from it,
+merge every finished branch back into it, and put ledger/board commits on it too.
+
+**`master` is frozen** at upstream `a8266c6` and must not receive commits of any
+kind. Phases 0–4a predate this rule and were developed on `master`; that history
+now lives on `claude-driven-changes`, and local `master` has been reset back to
+upstream. Anywhere below — or in the Phase 4a plan, spec, and board — that says
+`master`, read `claude-driven-changes`.
+
+This holds until the user says otherwise.
+
+---
+
 ## 1. Identity
 
 At the start of a session pick a stable **agent id**: `agentN` where N is the
@@ -49,12 +64,12 @@ Claim row columns:
 3. **Claim.** Add your row to the ledger. Commit it **before** any code change:
    `git add .coordination/LEDGER.md && git commit -m "coord: agentN claim <task>"`.
    Committing the claim first is what makes the claim visible to others.
-4. **Branch.** `git checkout -b agent/<task>-<agentid>` from `master` (or the
-   agreed base). Do your work here. Never push feature commits to `master` or to
-   a branch another agent owns.
+4. **Branch.** `git checkout -b agent/<task>-<agentid>` from
+   `claude-driven-changes` (§0). Do your work here. Never push feature commits to
+   `claude-driven-changes`, `master`, or a branch another agent owns.
 5. **Heartbeat.** Every ~15 min of active work, update `last_heartbeat` and
    re-commit the ledger (on your branch is fine; if a remote exists, also push
-   the ledger to a shared branch or `master` so others see it — see §6).
+   the ledger to `claude-driven-changes` so others see it — see §6).
 6. **Release.** When finished, set `status: DONE`, commit, and open a PR / hand
    off per the repo's integration flow. Remove your row on the next cleanup pass
    or leave it as `DONE` for history.
@@ -85,8 +100,8 @@ Claim row columns:
 ## 6. If there is a git remote
 
 - The ledger only coordinates agents that can see each other's commits. Push
-  ledger commits to a shared location (e.g. `master` or a dedicated
-  `coordination` branch) frequently so other agents' `git pull` sees your claim.
+  ledger commits to `claude-driven-changes` frequently so other agents'
+  `git pull` sees your claim.
 - Treat a merge conflict in `LEDGER.md` as two simultaneous claims: keep BOTH
   rows, then re-check for scope overlap and resolve per §3.2.
 
@@ -94,8 +109,8 @@ Claim row columns:
 
 - All agents share the same working tree/filesystem. Re-read `LEDGER.md` from
   disk before every claim and heartbeat (it may have changed under you).
-- Keep claims and heartbeats as ordinary commits on `master` for the ledger file
-  only; feature code still goes on per-agent branches.
+- Keep claims and heartbeats as ordinary commits on `claude-driven-changes` for
+  the ledger file only; feature code still goes on per-agent branches.
 
 ---
 

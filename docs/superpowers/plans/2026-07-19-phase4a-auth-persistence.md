@@ -1,5 +1,13 @@
 # Phase 4a — Auth + Core Persistence Implementation Plan
 
+> **⚠️ BRANCHING UPDATE (2026-07-25):** `claude-driven-changes` is now the
+> working line; **`master` is frozen** at upstream `a8266c6` and takes no
+> commits. This plan's COORDINATION section below (branch from `master`, commit
+> claims/board/ledger "on master", merge `feature/phase4a` → `master`) describes
+> how Phase 4a *was* executed and is kept for the historical record. **For any new
+> work, read every `master` in this document as `claude-driven-changes`.** The
+> authoritative rules are `CLAUDE.md` and `.coordination/PROTOCOL.md` §0.
+
 > **⚠️ T8 UPDATE (2026-07-24, agent5):** T8 is now executed via a **Docker-free
 > hosted-cloud path** (the machine's Docker install kept failing). The active,
 > authoritative T8 plan is `~/.claude/plans/composed-zooming-alpaca.md` — it

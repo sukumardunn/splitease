@@ -1,6 +1,12 @@
 # Phase 4a — Auth + Core Persistence (Local Supabase): Implementation Spec
 
-**Status:** FINAL — approved for implementation.
+**Status:** FINAL — implemented and shipped (Phase 4a merged as `8a0451c`).
+
+> **⚠️ BRANCHING UPDATE (2026-07-25):** `claude-driven-changes` is the working
+> line; **`master` is frozen** at upstream `a8266c6`. This spec's branching notes
+> are historical — read every `master` as `claude-driven-changes`. See `CLAUDE.md`
+> and `.coordination/PROTOCOL.md` §0.
+
 **Source design:** `docs/superpowers/specs/2026-07-19-phase4a-auth-persistence-design.md` (user-verified; do not re-litigate its locked decisions).
 **Execution plan:** `docs/superpowers/plans/2026-07-19-phase4a-auth-persistence.md`.
 **Task board (live status):** `.coordination/PHASE4A_BOARD.md`.

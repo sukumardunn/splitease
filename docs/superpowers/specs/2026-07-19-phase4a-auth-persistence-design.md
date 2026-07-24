@@ -1,5 +1,10 @@
 # Phase 4a — Auth + Core Persistence (Local Supabase): Design Brief / Handoff
 
+> **⚠️ BRANCHING UPDATE (2026-07-25):** `claude-driven-changes` is the working
+> line; **`master` is frozen** at upstream `a8266c6`. The "base 4a work on
+> `master`" note below is historical — read every `master` as
+> `claude-driven-changes`. See `CLAUDE.md` and `.coordination/PROTOCOL.md` §0.
+
 **Status:** Design approved (brainstorm complete). This document is a **handoff brief
 for authoring the detailed implementation spec** — it captures every decision, the
 approved design shape, and the repo-specific facts needed to write an accurate spec.
