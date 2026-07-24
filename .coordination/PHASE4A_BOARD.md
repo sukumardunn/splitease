@@ -1,5 +1,12 @@
 # Phase 4a Task Board — AUTHORITATIVE claim surface for this phase
 
+> **⚠️ BRANCHING UPDATE (2026-07-25):** Phase 4a is closed, and the branching
+> rules below are historical. `claude-driven-changes` is now the working line;
+> **`master` is frozen** at upstream `a8266c6` and takes no commits. The 4a merge
+> commit `8a0451c` referenced below now lives on `claude-driven-changes`. For new
+> work read `master` here as `claude-driven-changes` — see `CLAUDE.md` and
+> `.coordination/PROTOCOL.md` §0.
+
 **STATUS: PHASE 4a COMPLETE & MERGED TO MASTER** (merge `8a0451c`). T1–T8 all DONE. T8 done via Docker-free hosted-cloud path: migration live on hosted Supabase, gate green (typecheck/build/lint Node26, tests 85/85 Node20), backend acceptance 13/13 vs live Postgres, types 0-drift, browser smoke passed (auth/signup/import/rollback). master post-merge gate green.
 
 Plan: `docs/superpowers/plans/2026-07-19-phase4a-auth-persistence.md` (read its
