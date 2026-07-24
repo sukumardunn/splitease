@@ -90,6 +90,19 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   // Mirror of `state` that updates synchronously inside mutators, so rapid
   // successive mutations snapshot/rollback correctly (no stale closures).
   const stateRef = useRef<AppState | null>(null);
+  /**
+   * Whether the user is signed out *right now*, readable from an async callback
+   * that settles long after the render it was scheduled in.
+   *
+   * A mutation still in flight when the user signs out would otherwise toast
+   * "couldn't save your change" over the login screen: signing out unmounts this
+   * provider, but ToastProvider sits above the auth gate (see App.tsx) and
+   * survives, so the pending promise's rollback toast still renders.
+   */
+  const signedOutRef = useRef(false);
+  useEffect(() => {
+    signedOutRef.current = !session;
+  }, [session]);
 
   const applyState = (next: AppState | null) => {
     stateRef.current = next;
@@ -122,7 +135,6 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   /**
@@ -154,6 +166,9 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       .catch((err: unknown) => {
         console.warn('SplitEase: persist failed, rolling back', err);
         applyState(prev);
+        // Signed out mid-flight: the change is moot and the toast would land on
+        // the login screen, so roll back silently.
+        if (signedOutRef.current) return;
         showToast({ message: SAVE_FAILED_MESSAGE });
       });
   };
