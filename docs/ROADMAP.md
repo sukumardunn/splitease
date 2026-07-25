@@ -132,20 +132,16 @@ user data but has not been audited as a whole.
 - **`SUPABASE_SECRET_KEY` was printed in cleartext** in an agent transcript on
   2026-07-24 (a redaction regex in a status command failed to match). It should be
   rotated in Project Settings → API if that has not already happened.
-- **Four leftover test accounts are still in the hosted project.** Three were
-  found while verifying 5A, which reads the DB as superuser and so sees every
-  owner: `accepta_178491703417526@`, `acceptb_178491703417526@` (both empty, from
-  the 4a acceptance script) and `smoke_1784917666@` / "Smoke Tester A" (1 expense,
-  2 friends, from the 4b smoke). Earlier notes claim the smoke user was deleted;
-  it was not, or not fully. The fourth is
-  **`smoke6a_1784952000@example.com` / "Smoke Six A"** from the 6A browser
-  verification (2 friends "Alice"/"Bob", 5 expenses, 2 of them carrying notes).
-  Harmless but they are real `auth.users` rows in a live project. Deleting them is
-  a one-liner (`delete from auth.users where email = …` cascades, via
-  `SUPABASE_DB_URL` as superuser). 6A deliberately did **not** run it: the sandbox
-  blocked writing the throwaway script, and routing around a denial to run
-  `DELETE` against a live auth table is not the right call unattended. Cleaning up
-  all four together is a good one-off task for whoever has the dashboard open.
+- ~~**Four leftover test accounts in the hosted project.**~~ **Done** —
+  `accepta_178491703417526@`, `acceptb_178491703417526@`, `smoke_1784917666@` and
+  `smoke6a_1784952000@` were deleted on 2026-07-25 on the user's explicit
+  instruction, via `SUPABASE_DB_URL` as superuser in a transaction guarded by an
+  email allow-list and a row-count assertion. The cascade was verified: **every
+  table is now empty (0 users, 0 profiles, 0 expenses, 0 friends, 0 settlements,
+  0 activity_events, 0 import_batches) with 0 orphaned split/payer/profile
+  rows.** The hosted project is a clean slate, so the next agent to verify a flow
+  in the browser starts from a fresh signup and should delete it afterwards —
+  the script pattern is in the note above.
 
 ---
 
