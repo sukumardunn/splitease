@@ -23,6 +23,12 @@ vi.mock('../../context/AppContext', () => ({
     currentUser: ME,
     addExpense,
     deleteExpense,
+    // No receipts in these cases; the receipt-specific behaviour is pinned in
+    // ExpenseReceipt.test.tsx.
+    receipts: {},
+    attachReceipt: vi.fn(),
+    removeReceipt: vi.fn(),
+    loadReceipt: vi.fn(),
     getGroupById: (id: string) => groups.find((g) => g.id === id),
   }),
 }));

@@ -22,12 +22,19 @@ export interface FormSeed {
 }
 
 /**
- * An expense stores its *resolved* per-person amounts, never the mode that
- * produced them, so opening one for edit has to infer a mode. Only `equal` is
- * worth recovering — it keeps the split rebalancing if the amount is changed —
- * and it is claimed only when the stored splits match `resolveSplit`'s equal
- * output cent-for-cent. Everything else seeds `exact`, which round-trips any
- * split losslessly no matter what produced it (percentage, shares, import).
+ * Guess the mode behind an expense's stored amounts.
+ *
+ * **Fallback only.** Since migration 20260725000005 an expense records the mode
+ * it was created with (`Expense.splitMode`), and `deriveFormSeed` prefers that.
+ * This is what happens when there is nothing to prefer: a row written before
+ * that column existed, or a Phase 5A CSV import, which records resolved amounts
+ * and no intent.
+ *
+ * Only `equal` is worth recovering — it keeps the split rebalancing if the
+ * amount is changed — and it is claimed only when the stored splits match
+ * `resolveSplit`'s equal output cent-for-cent. Everything else seeds `exact`,
+ * which round-trips any split losslessly no matter what produced it (percentage,
+ * shares, import).
  *
  * The cent-for-cent comparison is `===` on two numbers, which is safe here and
  * not luck: both sides originate from a `numeric(12,2)` column, and
@@ -43,6 +50,80 @@ export function inferSplitMode(expense: Expense, participants: string[]): SplitM
     values: {},
   });
   return equal.every((s) => stored.get(s.userId) === s.amount) ? 'equal' : 'exact';
+}
+
+function roundToCents(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Refill the per-person *input boxes* for a mode, from the resolved amounts.
+ *
+ * Only the mode is stored, not the numbers that were typed into it, so the boxes
+ * have to be reconstructed. Each mode has an exact or near-exact reconstruction:
+ *
+ *  - `equal` needs no values at all (the inputs are hidden).
+ *  - `exact` is the stored amounts verbatim — lossless.
+ *  - `percentage` is `amount / total * 100` to two decimals, with the rounding
+ *    residual pushed onto the largest share so the boxes sum to exactly 100 and
+ *    the form does not open reporting itself invalid.
+ *  - `shares` reuses each amount as its own weight. Weights are normalised by
+ *    `resolveSplit`, so amount-as-weight reproduces the same split; what is lost
+ *    is only how the weights were *written* (2:1 shows as 20:10), which no
+ *    column records.
+ *  - `adjustment` is `amount - total/n`, the per-person delta from an equal
+ *    share, which is the definition the engine applies in reverse.
+ *
+ * Percentage and adjustment can land a cent away from the stored amounts on
+ * totals that do not divide cleanly; both stay inside the form's own ±$0.01
+ * validation tolerance, and the split is re-resolved on save anyway. `exact`
+ * remains the only bit-exact mode, which is why the `inferSplitMode` fallback
+ * still prefers it when nothing was recorded.
+ */
+function deriveSplitValues(
+  mode: SplitMode,
+  expense: Expense,
+  participants: string[]
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  const stored = new Map(expense.splitWith.map((s) => [s.userId, s.amount]));
+  const amountOf = (id: string) => stored.get(id) ?? 0;
+
+  if (mode === 'equal') return values;
+
+  if (mode === 'exact') {
+    for (const s of expense.splitWith) values[s.userId] = String(s.amount);
+    return values;
+  }
+
+  if (mode === 'shares') {
+    for (const id of participants) values[id] = String(amountOf(id));
+    return values;
+  }
+
+  if (mode === 'adjustment') {
+    const equalShare = expense.amount / participants.length;
+    for (const id of participants) {
+      values[id] = String(roundToCents(amountOf(id) - equalShare));
+    }
+    return values;
+  }
+
+  // percentage
+  if (expense.amount <= 0) return values;
+  const percents = participants.map((id) => roundToCents((amountOf(id) / expense.amount) * 100));
+  const residual = roundToCents(100 - percents.reduce((a, b) => a + b, 0));
+  if (residual !== 0) {
+    let largest = 0;
+    for (let i = 1; i < percents.length; i++) {
+      if (percents[i] > percents[largest]) largest = i;
+    }
+    percents[largest] = roundToCents(percents[largest] + residual);
+  }
+  participants.forEach((id, i) => {
+    values[id] = String(percents[i]);
+  });
+  return values;
 }
 
 /**
@@ -71,12 +152,13 @@ export function deriveFormSeed(currentUserId: string, expense?: Expense): FormSe
   const selectedFriends = expense.splitWith
     .map((s) => s.userId)
     .filter((id) => id !== currentUserId);
-  const splitMode = inferSplitMode(expense, [currentUserId, ...selectedFriends]);
+  const participants = [currentUserId, ...selectedFriends];
+  // Recorded intent wins; `inferSplitMode` is the fallback for rows that carry
+  // none (pre-20260725000005, or a CSV import). A 60/40 percentage split used to
+  // reopen as `exact` with the right numbers and the intent thrown away.
+  const splitMode = expense.splitMode ?? inferSplitMode(expense, participants);
 
-  const splitValues: Record<string, string> = {};
-  if (splitMode === 'exact') {
-    for (const s of expense.splitWith) splitValues[s.userId] = String(s.amount);
-  }
+  const splitValues = deriveSplitValues(splitMode, expense, participants);
   const payerValues: Record<string, string> = {};
   for (const p of expense.payers ?? []) payerValues[p.userId] = String(p.amount);
 
