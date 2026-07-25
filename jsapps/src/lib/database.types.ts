@@ -1,5 +1,6 @@
 // Hand-authored to match the migrations in supabase/migrations/ — currently
-// 20260719000001 (phase 4a) + 20260725000001 (phase 5a import batches).
+// 20260719000001 (phase 4a) + 20260725000001 (phase 5a import batches)
+// + 20260725000002 (atomic expense update RPC).
 // T8 reconciles this against `supabase gen types typescript --local` (generator wins).
 export type Json =
   | string
@@ -74,7 +75,16 @@ export type Database = {
       };
     };
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Functions: {
+      // Atomic expense edit (20260725000002): upsert the parent and replace its
+      // payer/split rows in one transaction. Returns the expense id it wrote,
+      // or null if the upsert matched nothing. `security invoker`, so RLS still
+      // scopes it to the caller's own expenses.
+      update_expense_with_children: {
+        Args: { p_expense: Json; p_payers?: Json; p_splits?: Json };
+        Returns: string | null;
+      };
+    };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
   };

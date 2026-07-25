@@ -326,19 +326,39 @@ export async function insertExpense(ownerId: string, e: Expense): Promise<void> 
   await writeExpenseChildren(bundle);
 }
 
+/**
+ * Edit an expense: upsert the parent and *replace* its payer/split rows.
+ *
+ * Done in one `update_expense_with_children` RPC rather than four REST calls
+ * (upsert, delete payers, delete splits, re-insert). Each REST call is its own
+ * transaction, so a failure landing after the deletes left the expense with zero
+ * splits while AppContext rolled back only its in-memory snapshot and told the
+ * user the change "was undone" — the debt then vanished on the next fetchAll.
+ * The function body is a single transaction, so the replace is all-or-nothing.
+ *
+ * The function is `security invoker`, so the same RLS policies that gate direct
+ * writes still apply: it cannot reach another owner's expense (see the
+ * 20260725000002 migration for why definer would be a cross-tenant hole).
+ *
+ * Signature is unchanged from the four-call version on purpose — AppContext
+ * calls this the same way.
+ */
 export async function updateExpense(ownerId: string, e: Expense): Promise<void> {
   const bundle = expenseToRow(ownerId, e);
-  await expectRowsAffected(
-    'update expense',
-    supabase.from('expenses').upsert(bundle.expense).select('id')
-  );
-  // The child deletes below may legitimately affect zero rows (an expense with
-  // no recorded payers), so they are not row-count checked.
-  const del1 = await supabase.from('expense_payers').delete().eq('expense_id', e.id);
-  if (del1.error) fail('replace expense_payers', del1.error.message);
-  const del2 = await supabase.from('expense_splits').delete().eq('expense_id', e.id);
-  if (del2.error) fail('replace expense_splits', del2.error.message);
-  await writeExpenseChildren(bundle);
+  const { data, error } = await supabase.rpc('update_expense_with_children', {
+    p_expense: bundle.expense as unknown as Json,
+    // Always sent, empty included: an empty array is how a caller clears the
+    // stale children of an expense that no longer has payers.
+    p_payers: bundle.payers as unknown as Json,
+    p_splits: bundle.splits as unknown as Json,
+  });
+  if (error) fail('update expense', error.message);
+  // Same guard as `expectRowsAffected`, adapted to an RPC: the function returns
+  // the id it wrote, and returns null if the upsert matched nothing. Anything
+  // other than the id we asked for means our write did not land.
+  if (data !== e.id) {
+    fail('update expense', 'no rows affected — row is missing or not permitted by row-level security');
+  }
 }
 
 export async function setExpenseDeleted(id: string, deletedAt: string | null): Promise<void> {
