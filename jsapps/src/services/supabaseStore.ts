@@ -9,6 +9,7 @@ import type { Database, Json } from '../lib/database.types';
 import { ActivityEvent } from './activityLog';
 import { toActivityAction, toActivityEntityType, toExpenseCategory } from './dbValidation';
 import { Expense, Friend, Group, Settlement, User } from '../types';
+import { generateAvatar } from '../utils/avatar';
 
 type Tables = Database['public']['Tables'];
 type ProfileRow = Tables['profiles']['Row'];
@@ -23,15 +24,35 @@ type ActivityEventRow = Tables['activity_events']['Row'];
 
 // ---------- pure mappers (exported for unit tests) ----------
 
+/**
+ * `profiles.avatar` and `friends.avatar` both default to '' in the schema, and the
+ * UI renders the value straight into `<img src>` in ~15 places — an empty string
+ * there shows a broken-image icon. Falling back at the mapper boundary fixes every
+ * render site at once, including rows written before avatars were generated.
+ */
+function avatarOr(stored: string, name: string): string {
+  return stored.trim() ? stored : generateAvatar(name);
+}
+
 export function profileFromRow(row: ProfileRow): User {
-  return { id: row.id, name: row.name, email: row.email, avatar: row.avatar };
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    avatar: avatarOr(row.avatar, row.name || row.email),
+  };
 }
 
 export function friendToRow(ownerId: string, f: Friend): Tables['friends']['Insert'] {
   return { id: f.id, owner_id: ownerId, name: f.name, email: f.email, avatar: f.avatar };
 }
 export function friendFromRow(row: FriendRow): Friend {
-  return { id: row.id, name: row.name, email: row.email, avatar: row.avatar };
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    avatar: avatarOr(row.avatar, row.name || row.email),
+  };
 }
 
 export interface GroupRowBundle {
@@ -297,6 +318,20 @@ export async function purgeExpense(id: string): Promise<void> {
   await expectRowsAffected(
     'purge expense',
     supabase.from('expenses').delete().eq('id', id).select('id')
+  );
+}
+
+// ---------- friend writes ----------
+
+export async function insertFriend(ownerId: string, f: Friend): Promise<void> {
+  const { error } = await supabase.from('friends').insert(friendToRow(ownerId, f));
+  if (error) fail('insert friend', error.message);
+}
+
+export async function setFriendDeleted(id: string, deletedAt: string | null): Promise<void> {
+  await expectRowsAffected(
+    'set friend deleted',
+    supabase.from('friends').update({ deleted_at: deletedAt }).eq('id', id).select('id')
   );
 }
 

@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { DownloadCloud, Loader2 } from 'lucide-react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 interface ImportPromptProps {
   busy: boolean;
@@ -7,61 +8,24 @@ interface ImportPromptProps {
   onDismiss: () => void;
 }
 
-const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-
 /** One-time offer to migrate pre-4a localStorage data into the user's account. */
 const ImportPrompt: React.FC<ImportPromptProps> = ({ busy, onImport, onDismiss }) => {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const importButtonRef = useRef<HTMLButtonElement>(null);
-
-  // Move focus into the dialog on open. Without this, focus stays on whatever
-  // was behind the overlay, so a keyboard or screen-reader user has no idea a
-  // modal appeared and can still tab through the obscured page.
-  useEffect(() => {
-    importButtonRef.current?.focus();
-  }, []);
-
-  /**
-   * Keep Tab inside the dialog, and let Escape dismiss it.
-   *
-   * `aria-modal` tells assistive tech the rest of the page is inert but does not
-   * actually stop Tab from leaving, so the trap has to be explicit.
-   */
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape') {
-      if (!busy) onDismiss();
-      return;
-    }
-    if (e.key !== 'Tab') return;
-
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []
-    );
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-
-    // Wrap around at both ends; also pull focus back if it somehow escaped.
-    if (e.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || !dialogRef.current?.contains(active))) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  // `locked` while importing: dismissing mid-write would hide the dialog while
+  // the batch insert is still running.
+  const { containerRef, onKeyDown } = useFocusTrap<HTMLDivElement>({
+    onEscape: onDismiss,
+    locked: busy,
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div
-        ref={dialogRef}
+        ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-prompt-title"
         aria-describedby="import-prompt-description"
-        onKeyDown={handleKeyDown}
+        onKeyDown={onKeyDown}
         className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6"
       >
         <div className="flex items-center mb-3">
@@ -77,7 +41,6 @@ const ImportPrompt: React.FC<ImportPromptProps> = ({ busy, onImport, onDismiss }
         </p>
         <div className="flex gap-3">
           <button
-            ref={importButtonRef}
             type="button"
             disabled={busy}
             aria-busy={busy}
