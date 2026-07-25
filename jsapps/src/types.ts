@@ -36,6 +36,13 @@ export interface Expense {
   deletedAt?: string | null;
   /** Free-text note (Phase 6 forward-compat; optional). */
   notes?: string;
+  /**
+   * Set when this expense came from a bulk import (Phase 5a), so undoing that
+   * import can find it again. Carried on the domain type rather than passed at
+   * write time because `updateExpense` upserts the whole row — an edit would
+   * otherwise silently detach the expense from its batch.
+   */
+  importBatchId?: string | null;
 }
 
 export interface Group {
@@ -57,6 +64,22 @@ export interface Settlement {
   date: string;
   groupId?: string | null;
   deletedAt?: string | null;
+}
+
+/**
+ * A bulk import (Phase 5a). Every row an import creates carries this id, so the
+ * whole thing can be undone at once. The record itself survives an undo — it is
+ * stamped `undoneAt` and kept as the audit trail of what was imported.
+ */
+export interface ImportBatch {
+  id: string;
+  /** 'csv' today; 'screenshot' when §5.2 phase B lands on the same pipeline. */
+  source: string;
+  filename: string;
+  expenseCount: number;
+  friendCount: number;
+  undoneAt?: string | null;
+  createdAt: string;
 }
 
 export type ExpenseCategory =
@@ -90,6 +113,8 @@ export interface AppState {
   settlements: Settlement[];
   /** Append-only audit/activity log (Phase 2). */
   activityEvents: ActivityEvent[];
+  /** Bulk-import records, newest first (Phase 5a). */
+  importBatches: ImportBatch[];
 }
 
 // Re-export the activity-log event type so consumers get it from the central

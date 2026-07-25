@@ -6,7 +6,7 @@ import React, {
   useState,
   ReactNode,
 } from 'react';
-import { AppState, Expense, Friend, Group, Settlement, User } from '../types';
+import { AppState, Expense, Friend, Group, ImportBatch, Settlement, User } from '../types';
 import * as store from '../services/supabaseStore';
 import { useAuth } from './AuthContext';
 import { useToast } from '../components/ui/Toast';
@@ -43,6 +43,8 @@ interface AppContextType {
   deletedExpenses: Expense[];
   /** Soft-deleted groups, most-recently-deleted first. */
   deletedGroups: Group[];
+  /** Bulk-import records, newest first — including ones already undone. */
+  importBatches: ImportBatch[];
   /** Create a contact to split with. Friends are local contacts, not accounts. */
   addFriend: (friend: { name: string; email: string }) => void;
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => void;
@@ -58,11 +60,29 @@ interface AppContextType {
   restoreGroup: (id: string) => void;
   purgeGroup: (id: string) => void;
   settleDebt: (fromId: string, toId: string, amount: number, groupId?: string | null) => void;
+  /**
+   * Write a CSV import as one undoable batch, then reload from the server.
+   *
+   * Unlike the other mutators this is `async` and not optimistic: a bulk write
+   * has no meaningful half-applied UI state, and the whole-state rollback the
+   * optimistic path uses would be the wrong tool for it. Callers await the
+   * promise and surface their own progress/errors.
+   */
+  importCsv: (input: CsvImportInput) => Promise<ImportBatch>;
+  /** Undo a previous import wholesale, then reload. See `undoImportBatch`. */
+  undoImport: (batchId: string) => Promise<store.UndoImportResult>;
   getBalances: () => { friend: Friend; balance: number }[];
   /** Minimal set of "who pays whom" transfers that settles the given participants
    *  (defaults to the current user + all friends). Powers debt simplification. */
   getSuggestedSettlements: (participantIds?: string[]) => Transfer[];
   getGroupById: (id: string) => Group | undefined;
+}
+
+export interface CsvImportInput {
+  friends: Friend[];
+  expenses: Expense[];
+  filename: string;
+  source?: string;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -160,11 +180,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     applyState(updater(prev));
     persist()
       .then(() => {
-        if (event) {
-          store.insertActivityEvent(userId, event).catch((err: unknown) => {
-            console.warn('SplitEase: activity event not persisted', err);
-          });
-        }
+        if (event) recordEvent(event);
       })
       .catch((err: unknown) => {
         console.warn('SplitEase: persist failed, rolling back', err);
@@ -459,6 +475,67 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     );
   };
 
+  /**
+   * Persist an activity event without letting its failure fail the caller. The
+   * audit log is secondary to the data it describes — same policy as `mutate`.
+   */
+  const recordEvent = (event: ActivityEvent): void => {
+    store.insertActivityEvent(userId, event).catch((err: unknown) => {
+      console.warn('SplitEase: activity event not persisted', err);
+    });
+  };
+
+  const importCsv = async (input: CsvImportInput): Promise<ImportBatch> => {
+    const current = stateRef.current;
+    if (!current) throw new Error('Not ready to import yet.');
+    const batchId = crypto.randomUUID();
+    const batch = await store.importCsvBatch(userId, batchId, {
+      friends: input.friends,
+      expenses: input.expenses,
+      filename: input.filename,
+      source: input.source ?? 'csv',
+    });
+    recordEvent(
+      buildEvent(current.currentUser.id, {
+        action: 'import.create',
+        entityType: 'import',
+        entityId: batch.id,
+        after: {
+          source: batch.source,
+          filename: batch.filename,
+          expenseCount: batch.expenseCount,
+          friendCount: batch.friendCount,
+        },
+      })
+    );
+    // Refetch rather than merge: the batch touched friends, expenses, payers and
+    // splits at once, and the server is the only thing that knows what landed.
+    applyState(await store.fetchAll(userId));
+    return batch;
+  };
+
+  const undoImport = async (batchId: string): Promise<store.UndoImportResult> => {
+    const current = stateRef.current;
+    if (!current) throw new Error('Not ready yet.');
+    const batch = current.importBatches.find((b) => b.id === batchId);
+    const result = await store.undoImportBatch(batchId);
+    recordEvent(
+      buildEvent(current.currentUser.id, {
+        action: 'import.undo',
+        entityType: 'import',
+        entityId: batchId,
+        before: {
+          source: batch?.source,
+          filename: batch?.filename,
+          expenseCount: result.expensesRemoved,
+          friendCount: result.friendsRemoved,
+        },
+      })
+    );
+    applyState(await store.fetchAll(userId));
+    return result;
+  };
+
   const handleImport = () => {
     const candidate = importCandidate;
     if (!candidate) return;
@@ -573,6 +650,9 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     restoreGroup,
     purgeGroup,
     settleDebt,
+    importBatches: state.importBatches,
+    importCsv,
+    undoImport,
     getBalances,
     getSuggestedSettlements,
     getGroupById,

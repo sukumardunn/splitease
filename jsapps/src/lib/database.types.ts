@@ -1,4 +1,5 @@
-// Hand-authored to match supabase/migrations/20260719000001_phase4a_auth_persistence.sql.
+// Hand-authored to match the migrations in supabase/migrations/ — currently
+// 20260719000001 (phase 4a) + 20260725000001 (phase 5a import batches).
 // T8 reconciles this against `supabase gen types typescript --local` (generator wins).
 export type Json =
   | string
@@ -18,9 +19,9 @@ export type Database = {
         Relationships: [];
       };
       friends: {
-        Row: { id: string; owner_id: string; name: string; email: string; avatar: string; deleted_at: string | null; created_at: string };
-        Insert: { id?: string; owner_id: string; name: string; email?: string; avatar?: string; deleted_at?: string | null; created_at?: string };
-        Update: { id?: string; owner_id?: string; name?: string; email?: string; avatar?: string; deleted_at?: string | null; created_at?: string };
+        Row: { id: string; owner_id: string; name: string; email: string; avatar: string; deleted_at: string | null; created_at: string; import_batch_id: string | null };
+        Insert: { id?: string; owner_id: string; name: string; email?: string; avatar?: string; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
+        Update: { id?: string; owner_id?: string; name?: string; email?: string; avatar?: string; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
         Relationships: [];
       };
       groups: {
@@ -36,9 +37,9 @@ export type Database = {
         Relationships: [];
       };
       expenses: {
-        Row: { id: string; owner_id: string; description: string; amount: number; paid_by: string; date: string; category: string; currency: string; group_id: string | null; notes: string | null; deleted_at: string | null; created_at: string };
-        Insert: { id?: string; owner_id: string; description: string; amount: number; paid_by: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string };
-        Update: { id?: string; owner_id?: string; description?: string; amount?: number; paid_by?: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string };
+        Row: { id: string; owner_id: string; description: string; amount: number; paid_by: string; date: string; category: string; currency: string; group_id: string | null; notes: string | null; deleted_at: string | null; created_at: string; import_batch_id: string | null };
+        Insert: { id?: string; owner_id: string; description: string; amount: number; paid_by: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
+        Update: { id?: string; owner_id?: string; description?: string; amount?: number; paid_by?: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
         Relationships: [];
       };
       expense_payers: {
@@ -63,6 +64,12 @@ export type Database = {
         Row: { id: string; owner_id: string; actor_id: string; action: string; entity_type: string; entity_id: string; group_id: string | null; before: Json | null; after: Json | null; created_at: string };
         Insert: { id?: string; owner_id: string; actor_id: string; action: string; entity_type: string; entity_id: string; group_id?: string | null; before?: Json | null; after?: Json | null; created_at?: string };
         Update: { id?: string; owner_id?: string; actor_id?: string; action?: string; entity_type?: string; entity_id?: string; group_id?: string | null; before?: Json | null; after?: Json | null; created_at?: string };
+        Relationships: [];
+      };
+      import_batches: {
+        Row: { id: string; owner_id: string; source: string; filename: string; expense_count: number; friend_count: number; undone_at: string | null; created_at: string };
+        Insert: { id?: string; owner_id: string; source?: string; filename?: string; expense_count?: number; friend_count?: number; undone_at?: string | null; created_at?: string };
+        Update: { id?: string; owner_id?: string; source?: string; filename?: string; expense_count?: number; friend_count?: number; undone_at?: string | null; created_at?: string };
         Relationships: [];
       };
     };

@@ -56,6 +56,7 @@ function baseRemote(): store.RemoteState {
     ],
     settlements: [],
     activityEvents: [],
+    importBatches: [],
   };
 }
 
