@@ -4,6 +4,9 @@ import { useAppContext } from '../context/AppContext';
 import { formatDate } from '../utils/helpers';
 import { describeActivity, ActivityEvent } from '../services/activityLog';
 
+/** Derived from the describer rather than re-declared, so it cannot drift. */
+type ActivityTone = ReturnType<typeof describeActivity>['tone'];
+
 const TONE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   expense: Receipt,
   settlement: DollarSign,
@@ -12,12 +15,23 @@ const TONE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   delete: Trash2,
 };
 
-const TONE_COLOR: Record<string, string> = {
-  expense: 'blue',
-  settlement: 'green',
-  group: 'purple',
-  friend: 'orange',
-  delete: 'gray',
+/**
+ * Whole literal class names, not a hue to interpolate into `bg-${hue}-100`.
+ *
+ * That interpolation is what this map replaced: Tailwind's extractor is a static
+ * scanner, so a class assembled at runtime is never in what it reads and no rule
+ * is emitted — every icon chip in this feed rendered unstyled. Same fix and same
+ * reasoning as `utils/categoryColors.ts`; see its header.
+ *
+ * The tones are a closed set produced by `describeActivity`, so this is keyed by
+ * `ActivityTone` rather than `string` to make the compiler enforce coverage.
+ */
+const TONE_COLOR: Record<ActivityTone, { bg: string; text: string }> = {
+  expense: { bg: 'bg-blue-100', text: 'text-blue-600' },
+  settlement: { bg: 'bg-green-100', text: 'text-green-600' },
+  group: { bg: 'bg-purple-100', text: 'text-purple-600' },
+  friend: { bg: 'bg-orange-100', text: 'text-orange-600' },
+  delete: { bg: 'bg-gray-100', text: 'text-gray-600' },
 };
 
 const Activity: React.FC = () => {
@@ -86,13 +100,13 @@ interface ActivityRowProps {
 const ActivityRow: React.FC<ActivityRowProps> = ({ event, nameOf }) => {
   const description = describeActivity(event, nameOf);
   const Icon = TONE_ICON[description.tone] ?? Receipt;
-  const color = TONE_COLOR[description.tone] ?? 'gray';
+  const tone = TONE_COLOR[description.tone] ?? TONE_COLOR.expense;
 
   return (
     <div className="px-6 py-4 hover:bg-gray-50 transition-colors">
       <div className="flex items-start">
-        <div className={`bg-${color}-100 rounded-full p-2 mr-4`}>
-          <Icon className={`h-5 w-5 text-${color}-600`} />
+        <div className={`${tone.bg} rounded-full p-2 mr-4`}>
+          <Icon className={`h-5 w-5 ${tone.text}`} />
         </div>
         <div className="flex-1">
           <div className="flex justify-between">
