@@ -191,6 +191,23 @@ describe('importState goes through the atomic RPC', () => {
     }
   });
 
+  // Regression guard for client/SQL drift. `import_state` names every `expenses`
+  // column explicitly, so a column the client sends but the function does not name
+  // is silently dropped — which is exactly what happened to `split_mode`: it landed
+  // one migration after the import function was written, and imported expenses took
+  // the column default until 20260725000007 named it. This test pins the client half
+  // (the payload really carries the mode); the SQL half is pinned by that migration.
+  it('carries split_mode in the expense payload, including a null for unrecorded intent', async () => {
+    await importState(OWNER, { ...FULL, expenses: [{ ...AN_EXPENSE, splitMode: 'percentage' }] });
+    expect(args().p_expenses[0]).toMatchObject({ split_mode: 'percentage' });
+
+    rpcCalls = [];
+    await importState(OWNER, FULL);
+    // AN_EXPENSE has no splitMode, and the column's NULL means "intent not
+    // recorded" — so this must be an explicit null, never omitted and never ''.
+    expect(args().p_expenses[0]).toHaveProperty('split_mode', null);
+  });
+
   it('surfaces an RPC error as a thrown import failure', async () => {
     nextRpcResult = { data: null, error: { message: 'permission denied for table friends' } };
     await expect(importState(OWNER, FULL)).rejects.toThrow(/import: permission denied/);
