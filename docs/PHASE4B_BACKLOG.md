@@ -40,14 +40,22 @@ status against each entry below.
 
 ## Security
 
-6. ~~**`activity_events` RLS tighten**~~ — **CODE DONE** (`47b778a`),
-   **⚠️ NOT YET APPLIED to the hosted database.** The 4a policy was `for all`,
-   copied from the mutable-data tables, so the owner could UPDATE/DELETE rows in
-   the log auditing their own actions. Migration
+6. ~~**`activity_events` RLS tighten**~~ — **DONE and APPLIED** (`47b778a`). The
+   4a policy was `for all`, copied from the mutable-data tables, so the owner
+   could UPDATE/DELETE rows in the log auditing their own actions. Migration
    `supabase/migrations/20260724000001_phase4b_activity_events_append_only.sql`
-   replaces it with select+insert policies. **Run it in the Supabase dashboard
-   SQL editor** — there is no `supabase` CLI or `psql` on this machine, and the
-   service-role key can't execute DDL over the REST API.
+   replaces it with select+insert policies; applied to the hosted project
+   2026-07-24 and verified with a real user JWT (not the service key):
+
+   | op | result |
+   |----|--------|
+   | INSERT own event | 201, 1 row |
+   | SELECT own event | 200, 1 row |
+   | UPDATE own event | 200, **0 rows** |
+   | DELETE own event | 200, **0 rows** |
+
+   Note the shape of the denial: UPDATE/DELETE return **HTTP 200 with zero rows,
+   not an error** — the same silent-no-op behaviour item 1 defends against.
 
 ## Accessibility / UX
 
