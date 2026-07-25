@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, UserPlus, Search, DollarSign, ArrowRight } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import SettleUpModal from '../components/expenses/SettleUpModal';
+import AddFriendModal from '../components/friends/AddFriendModal';
 
 interface SettleUpPrefill {
   fromUserId: string;
@@ -15,6 +16,7 @@ const Friends: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [settlePrefill, setSettlePrefill] = useState<SettleUpPrefill | null>(null);
   const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
+  const [isAddFriendOpen, setIsAddFriendOpen] = useState(false);
 
   // Get the balances for each friend
   const balances = getBalances();
@@ -61,8 +63,12 @@ const Friends: React.FC = () => {
             />
           </div>
 
-          <button className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200">
-            <UserPlus className="h-5 w-5 mr-2" />
+          <button
+            type="button"
+            onClick={() => setIsAddFriendOpen(true)}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+          >
+            <UserPlus className="h-5 w-5 mr-2" aria-hidden="true" />
             <span>Add Friend</span>
           </button>
         </div>
@@ -164,12 +170,18 @@ const Friends: React.FC = () => {
               ? "We couldn't find any friends matching your search."
               : "You haven't added any friends yet. Add a friend to start tracking shared expenses."}
           </p>
-          <button className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg inline-flex items-center transition-colors duration-200">
-            <Plus className="h-5 w-5 mr-2" />
+          <button
+            type="button"
+            onClick={() => setIsAddFriendOpen(true)}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg inline-flex items-center transition-colors duration-200"
+          >
+            <Plus className="h-5 w-5 mr-2" aria-hidden="true" />
             <span>Add Friend</span>
           </button>
         </div>
       )}
+
+      <AddFriendModal isOpen={isAddFriendOpen} onClose={() => setIsAddFriendOpen(false)} />
 
       <SettleUpModal
         isOpen={isSettleModalOpen}

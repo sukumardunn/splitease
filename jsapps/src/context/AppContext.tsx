@@ -24,6 +24,7 @@ import {
   createActivityEvent,
 } from '../services/activityLog';
 import { loadState, clearState } from '../services/localStore';
+import { generateAvatar } from '../utils/avatar';
 import { remapLocalState, IMPORT_HANDLED_KEY } from '../services/importRemapper';
 import ImportPrompt from '../components/import/ImportPrompt';
 
@@ -42,6 +43,8 @@ interface AppContextType {
   deletedExpenses: Expense[];
   /** Soft-deleted groups, most-recently-deleted first. */
   deletedGroups: Group[];
+  /** Create a contact to split with. Friends are local contacts, not accounts. */
+  addFriend: (friend: { name: string; email: string }) => void;
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => void;
   updateExpense: (id: string, expense: Partial<Expense>) => void;
   /** Soft-delete: sets deletedAt; reversible via restoreExpense. */
@@ -178,6 +181,32 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     input: Omit<CreateEventInput, 'actorId' | 'id'>
   ): ActivityEvent =>
     createActivityEvent({ id: crypto.randomUUID(), actorId, ...input });
+
+  const addFriend = (input: { name: string; email: string }) => {
+    const current = stateRef.current;
+    if (!current) return;
+    const newFriend: Friend = {
+      id: crypto.randomUUID(),
+      name: input.name,
+      email: input.email,
+      avatar: generateAvatar(input.name),
+    };
+    const event = buildEvent(current.currentUser.id, {
+      action: 'friend.add',
+      entityType: 'friend',
+      entityId: newFriend.id,
+      after: newFriend,
+    });
+    mutate(
+      (prev) => ({
+        ...prev,
+        friends: [...prev.friends, newFriend],
+        activityEvents: appendActivityEvent(prev.activityEvents, event),
+      }),
+      () => store.insertFriend(userId, newFriend),
+      event
+    );
+  };
 
   const addExpense = (expense: Omit<Expense, 'id' | 'date'>) => {
     const current = stateRef.current;
@@ -532,6 +561,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     activityEvents,
     deletedExpenses,
     deletedGroups,
+    addFriend,
     addExpense,
     updateExpense,
     deleteExpense,
