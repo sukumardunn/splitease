@@ -28,6 +28,13 @@ before claiming anything.
 | — | **Hardening wave** (no user decision needed): all three non-atomic child-write paths now go through `security invoker` RPCs — `insertExpense`/`updateExpense` share `update_expense_with_children` (`…0002`), `insertGroup`/`updateGroup` share `update_group_with_members` (`…0003`), and `…0004` revokes `anon` EXECUTE on both. `useFocusTrap` returns focus to the trigger. Dynamic Tailwind classes replaced with typed static maps in `ExpenseItem` and `Activity` — those chips had been emitting **no CSS at all**. The category card derives its own denominator instead of trusting a second aggregate. Plus [`RLS_AUDIT.md`](RLS_AUDIT.md). 370 → 414 tests. | merges `a79e992`…`4455fa8` |
 | — | **Edit expense** (6A follow-up): `updateExpense` had existed in both `AppContext` and `supabaseStore` since 4a with **zero UI callers**, so nothing in the app could change an expense after creation — including 6A's notes. `AddExpenseModal` now takes an optional `expense` and patches instead of inserting; `ExpenseItem` grew an edit button, so all three render sites get it. Split mode is *inferred* on open (see below). Also gave the modal the focus trap, Escape, and `role="dialog"` it was missing, and largest-remaindered the category percentages that could sum to 101%. | merge (this change) |
 
+| 6B | **Receipt attachments stored in Postgres** (no Storage bucket — user decision) + **`split_mode` persisted**, migration `20260725000005`. Bytes live in `expense_receipts`, a child table fetched only when a receipt is opened, base64 `text`, downscaled client-side with `<canvas>` (no new dependency) and capped by a server-side `CHECK`. | merge (this wave) |
+| — | **Atomic `importState`** (`20260725000006`, `…0007` adds `split_mode`) — the last multi-table writer that could half-apply. Plus two retry holes it did not cover on its own. | merge `eec3853`, `6826707` |
+| — | **Scoped rollback + reconcile** — `mutate()` undoes only the row it touched and refetches after a failure, replacing the whole-state snapshot that discarded concurrent writes. | `6f6f3a2` |
+
+**Gate as of this wave:** **507 tests**, green on Node 20 **and** 26; typecheck,
+build and lint clean (0 errors, the same 3 pre-existing `react-refresh` warnings).
+
 **Gate as of the Phase 6A merge:** 327 tests, green on Node 20 **and** 26;
 typecheck, build, and lint clean (3 pre-existing `react-refresh` warnings,
 0 errors). Every flow was also driven end-to-end in a real browser against the
@@ -54,10 +61,40 @@ column defaulting to `'csv'`. It is applied to the hosted DB and it honestly
 records provenance, so it was not worth a migration to drop — but it no longer
 means "screenshot support is coming".
 
-### P1 — Phase 6B: Receipt attachments (in progress)
+### ~~P1 — Phase 6B: Receipt attachments~~ — DONE 2026-07-25
 
-**6A (notes + analytics) is done** — see the table above. What's left of Phase 6
-is attachments only.
+Shipped as described below, plus two corrections the implementing agent made to
+the plan, both right:
+
+- **A second `CHECK` on `octet_length(data_base64) <= 699052`.** `byte_size` is a
+  *client-supplied number*, so on its own it guards nothing — a caller can claim
+  1 KB and post 10 MB. Proved live: a lied-about `byte_size` is rejected.
+- **The RLS policy also checks the parent expense's owner**, not just
+  `auth.uid() = owner_id`. Not redundant: FK validation bypasses RLS, so without
+  it user B could park bytes against user A's expense id. Rejection verified live.
+- `split_mode` was added **nullable with no default**, contrary to the brief's
+  suggested `'exact'`: a defaulted `'exact'` is indistinguishable from a *recorded*
+  `'exact'`, which would destroy the one thing `inferSplitMode` gets right on old
+  rows. NULL means "intent unknown" → infer. `inferSplitMode` stays as the fallback.
+- Storing only the mode is not enough to reopen a form — the *numbers* typed into
+  it are not stored either. `deriveSplitValues` rebuilds them (percentages
+  back-computed with the rounding residual pushed onto the largest share so they
+  sum to exactly 100; shares reuse amounts as weights; adjustment as deltas from
+  an equal share), with tests proving all three round-trip through `resolveSplit`
+  to identical cents.
+
+Verified live, 33/33 backend checks with real user JWTs and 25/25 in a real
+browser: a 3.6 MB 3840×2160 JPEG stored as 184730 bytes at 1600×900, base64 with
+no `data:` prefix, bytes queried **only on open**, surviving a hard reload;
+replace and remove both leave exactly the right rows; a 60/40 percentage split
+reopens as **percentage**; deleting an expense cascades its receipt away.
+
+**Known gaps** (from the implementing agent, worth keeping): the
+"still-too-big-at-quality-0.5" rejection path is covered by unit tests only, not
+by a real stubborn photo; and the Safari `createImageBitmap` fallback is written
+but never exercised, since Chrome always takes the primary branch.
+
+Original decision and design, kept for the record:
 
 **Storage bucket rejected; receipts go in Postgres.** User decision, 2026-07-25:
 *"Storage bucket feels like adding more variables for a small app - we can add
@@ -221,30 +258,49 @@ verdict; the doc names the queries that settle them.
   silently done nothing for half the modals. That also fixed a latent bug: those
   two never took *initial* focus either, invisible because their tests only ever
   render them already open.
-- **Whole-state rollback granularity** (4b item 5) — **DECIDED 2026-07-25:
-  per-entity snapshots + refetch-on-failure now; a mutation queue only if/when
-  offline support is wanted.** A failed write restores the entire state snapshot,
-  discarding any concurrent in-flight optimistic update. A spec'd 4a tradeoff,
-  commented in `AppContext.tsx:163-172`.
+- ~~**Whole-state rollback granularity**~~ (4b item 5) — **Fixed 2026-07-25**
+  (user chose per-entity snapshots + refetch-on-failure; a mutation queue only
+  if/when offline support is wanted).
 
-  **⚠️ Implement the narrowing INSIDE `mutate()`** — give it an entity descriptor
-  and keep the rollback logic in that one function. Do **not** hand-write twelve
-  bespoke `catch` handlers. This was an explicit condition of the decision: the
-  user asked how much of this work is wasted when a mutation queue lands later,
-  and the answer is "only the splice body, ~30–50 lines" *precisely because* all
-  12 mutators funnel through one chokepoint and a queue would replace that same
-  function's internals. Twelve bespoke handlers would turn a cheap swap into a
-  twelve-site unwind.
+  `mutate()` now takes a `MutationTarget` (`collection`, `id`, `before`, `index`)
+  and undoes **just that row against current state**, dropping the optimistic
+  activity event by id so a sibling's event survives. On failure it also
+  **refetches** — scoped rollback fixes *what* is undone, the refetch fixes *how
+  long* a divergence can last, and they are independent. The refetch is held while
+  any other write is in flight (`inFlightRef`), because that write's row is not in
+  the database yet and refetching would make it blink out and back.
 
-  Also decided: **refetch after a failed write** (`fetchAll` on the rollback path).
-  Roughly ten lines, and it is what stops the UI *lingering* on a stale lie —
-  neither rollback model does that on its own. It is not throwaway work; a queue's
-  replay model needs the same "last known server state" notion.
+  The two bugs this closed: a write that had already committed could vanish from
+  the screen while its row sat in Postgres, and because each rollback restored a
+  different point in history the **last** failure won and could *resurrect* a
+  change that had already been undone.
 
-  Rejected for now: the variant of a queue that applies the optimistic update only
-  when the write starts, so just one is ever outstanding and whole-state snapshots
-  become safe again. It makes a second edit invisible until the first write
-  returns, which throws away the instant feel that justifies optimistic UI at all.
+  **⚠️ The narrowing lives INSIDE `mutate()` on purpose — keep it there.** All 12
+  mutators funnel through that one function, so a mutation queue later is a swap
+  of its internals; twelve bespoke `catch` handlers would make it a twelve-site
+  unwind. This was an explicit condition of the user's decision, who asked how
+  much of this work is wasted when a queue lands: only the splice body, ~30–50
+  lines. The refetch is not wasted at all — a queue's replay model needs the same
+  "last known server state" notion.
+
+  **Still last-write-wins on the same row.** Two mutations racing on one entity
+  still resolve in arbitrary DB order, and rolling back the first would clobber
+  the second's value. Only serialising writes fixes that; scoping cannot.
+
+  Rejected: the queue variant that applies the optimistic update only when the
+  write *starts*, so just one is ever outstanding and whole-state snapshots become
+  safe again. It makes a second edit invisible until the first write returns, which
+  throws away the instant feel that justifies optimistic UI at all.
+
+  **Verified, not assumed.** Reverting `mutate`'s catch to `applyState(prev)` makes
+  **3 of the 5 new tests fail** — both historical bugs plus the missing reconcile;
+  the other two pass either way and are guards on the new logic, which the test
+  file says explicitly. The pre-existing rollback tests pass either way, because
+  they only ever have one write in flight — which is exactly why they never caught
+  this. Also driven in a real browser against the hosted DB, 11/11: a committed
+  friend survived an unrelated expense failure whose RPC was aborted at the network
+  layer, the toast fired, the reconcile GET fired, no expense row was created, and
+  the throwaway account was deleted (0 users, 0 rows afterwards).
 
   The concrete shape, so nobody has to re-derive it: all domain data is a single
   `useState` (`AppState` = 1 scalar + 6 arrays) mirrored by a synchronous
@@ -313,9 +369,13 @@ verdict; the doc names the queries that settle them.
   usable for applying migrations — there is no `supabase` CLI or `psql` on this
   machine).
 - Migrations are append-only. Never edit an applied file; add a new one.
-- **`20260725000006` (atomic `import_state`) is applied to the hosted project** and
-  verified with real user JWTs, including both forced-failure cases, four
-  cross-tenant rejections and the `anon` EXECUTE check.
+- **All migrations through `20260725000007` are applied to the hosted project**,
+  each verified with real user JWTs: `…0005` (receipts + `split_mode`) 33/33 checks,
+  `…0006` (atomic `import_state`) including both forced-failure cases and four
+  cross-tenant rejections, `…0007` (adds `split_mode` to the import) 13/13.
+  `…0007` is a `create or replace` with an unchanged signature, so `…0006`'s ACL
+  survived — confirmed afterwards: `prosecdef = false`, exactly one overload, and
+  `anon` still has no EXECUTE.
 - **All migrations through `20260725000004` are applied to the hosted project**
 (`…0002` atomic expense write, `…0003` atomic group write, `…0004` revoking
 `anon` EXECUTE on both). Each was applied in a transaction and verified
