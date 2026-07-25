@@ -145,6 +145,53 @@ export function totalsByCategory(expenses: Expense[], userId: string): CategoryS
     .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
 }
 
+/**
+ * Whole-percent shares of `total`, apportioned by largest remainder.
+ *
+ * Rounding each share independently is what makes a three-way breakdown print
+ * 34% / 34% / 34% = 102%: every share is rounded in isolation, the errors point
+ * the same way, and nothing reconciles them. Largest remainder floors each share
+ * first, then hands the leftover whole points to the largest fractional parts,
+ * so the printed column adds up to what a reader gets by summing it.
+ *
+ * Only the *percentages* are re-apportioned. The dollar figures beside them are
+ * exact and are deliberately not touched — this function never sees them as
+ * anything but a ratio.
+ *
+ * `total` is the denominator, so the result sums to exactly 100 when `values`
+ * sum to `total` (which is how the category card calls it). When they sum to
+ * less, the target is the rounded exact sum instead: a subset of spending must
+ * not be inflated to 100%.
+ *
+ * Ties in the fractional part go to the earlier index, so the output is a pure
+ * function of the caller's ordering — `totalsByCategory` already sorts stably,
+ * and a percentage that flickered between renders would be a real bug.
+ */
+export function percentageShares(values: number[], total: number): number[] {
+  // No spend at all, or a nonsense denominator: everything is 0%. Guarding the
+  // division here is what keeps an empty period from rendering NaN%.
+  if (!(total > 0)) return values.map(() => 0);
+
+  const exact = values.map((v) => (v / total) * 100);
+  // Nudge before flooring so a share that is mathematically whole but lands at
+  // 24.999999999999996 in binary floating point floors to 25, not to 24.
+  const floors = exact.map((p) => Math.floor(p + 1e-9));
+  const fracs = exact.map((p, i) => p - floors[i]);
+  const target = Math.round(exact.reduce((a, b) => a + b, 0));
+
+  // Equals round(sum of fracs), so it is in [0, values.length] — never
+  // negative, which is why only the "hand points out" direction exists.
+  const leftover = target - floors.reduce((a, b) => a + b, 0);
+  const byRemainder = values
+    .map((_, i) => i)
+    .sort((a, b) => fracs[b] - fracs[a] || a - b);
+  for (let k = 0; k < leftover && k < byRemainder.length; k++) {
+    floors[byRemainder[k]] += 1;
+  }
+
+  return floors;
+}
+
 export interface MonthSlice {
   /** `YYYY-MM`, UTC. */
   key: string;
