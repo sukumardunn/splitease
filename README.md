@@ -140,9 +140,6 @@ what's left, in priority order. Read it before picking up work.
 
 ## Known issues
 
-- **"Add Friend" does nothing** — the buttons in `src/pages/Friends.tsx` have no
-  handler, and there is no `addFriend` anywhere in the app, so a new user can't
-  add anyone to split with. Top of the roadmap.
 - **Whole-state rollback granularity** — a failed write restores the entire state
   snapshot, discarding any concurrent in-flight optimistic update. A spec'd
   Phase-4a tradeoff, commented in `AppContext.tsx`; fixing it needs a real

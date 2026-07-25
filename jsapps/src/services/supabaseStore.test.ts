@@ -76,10 +76,25 @@ describe('group mapping', () => {
 });
 
 describe('friend mapping', () => {
-  it('round-trips a friend', () => {
-    const f = { id: 'dddddddd-0000-4000-8000-000000000001', name: 'Ana', email: 'a@x.com', avatar: '' };
+  it('round-trips a friend, preserving a stored avatar verbatim', () => {
+    const f = {
+      id: 'dddddddd-0000-4000-8000-000000000001',
+      name: 'Ana',
+      email: 'a@x.com',
+      avatar: 'https://example.com/ana.png',
+    };
     const back = friendFromRow({ ...friendToRow(OWNER, f), deleted_at: null, created_at: 'x' } as never);
     expect(back).toEqual(f);
+  });
+
+  it('substitutes a generated avatar when the stored one is empty', () => {
+    // The schema defaults avatar to '', which the UI would render as a broken
+    // image; the mapper fills it so all ~15 render sites are covered at once.
+    const f = { id: 'dddddddd-0000-4000-8000-000000000002', name: 'Ana', email: 'a@x.com', avatar: '' };
+    const back = friendFromRow({ ...friendToRow(OWNER, f), deleted_at: null, created_at: 'x' } as never);
+    expect(back.avatar).toMatch(/^data:image\/svg\+xml/);
+    expect(decodeURIComponent(back.avatar)).toContain('>AN<');
+    expect(back).toMatchObject({ id: f.id, name: f.name, email: f.email });
   });
 });
 
