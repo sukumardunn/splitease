@@ -6,6 +6,8 @@ import { captureConsoleWarn } from '../test/console';
 
 vi.mock('../services/supabaseStore', () => ({
   fetchAll: vi.fn(),
+  insertFriend: vi.fn().mockResolvedValue(undefined),
+  setFriendDeleted: vi.fn().mockResolvedValue(undefined),
   insertExpense: vi.fn().mockResolvedValue(undefined),
   updateExpense: vi.fn().mockResolvedValue(undefined),
   setExpenseDeleted: vi.fn().mockResolvedValue(undefined),
@@ -92,6 +94,7 @@ function Harness() {
     settlements,
     currentUser,
     friends,
+    addFriend,
     addExpense,
     deleteExpense,
     restoreExpense,
@@ -107,6 +110,15 @@ function Harness() {
       <span data-testid="deleted">{deletedExpenses.length}</span>
       <span data-testid="events">{activityEvents.length}</span>
       <span data-testid="settlements">{settlements.length}</span>
+      <span data-testid="friends">{friends.length}</span>
+      <span data-testid="newestFriend">{friends[friends.length - 1]?.name ?? ''}</span>
+      <span data-testid="newestFriendAvatar">{friends[friends.length - 1]?.avatar ?? ''}</span>
+      <button
+        data-testid="addFriend"
+        onClick={() => addFriend({ name: 'Grace Hopper', email: 'grace@x.com' })}
+      >
+        addFriend
+      </button>
       <span data-testid="last">{activityEvents[0]?.action ?? ''}</span>
       <span data-testid="top">{newest?.description ?? ''}</span>
       <button
@@ -251,6 +263,47 @@ describe('AppContext Phase 2/3 behaviour', () => {
     // Applied optimistically first.
     expect(screen.getByTestId('top').textContent).toBe('Coffee');
     await waitFor(() => expect(num('active')).toBe(0));
+    expect(screen.getByText(/Couldn.t save your change/)).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('persist failed'),
+      expect.any(Error)
+    );
+  });
+
+  it('adds a friend optimistically, with a generated avatar and an activity event', async () => {
+    // Pre-4b there was no addFriend at all, so a new user could not add anyone
+    // to split with; `friend.add` was an ActivityAction with no producer.
+    await renderReady();
+    const startCount = num('friends');
+
+    click('addFriend');
+
+    expect(num('friends')).toBe(startCount + 1);
+    expect(screen.getByTestId('newestFriend').textContent).toBe('Grace Hopper');
+    // Avatar is generated, not the schema's '' default, so the img isn't broken.
+    expect(screen.getByTestId('newestFriendAvatar').textContent).toMatch(/^data:image\/svg\+xml/);
+    expect(screen.getByTestId('last').textContent).toBe('friend.add');
+
+    await waitFor(() => expect(store.insertFriend).toHaveBeenCalled());
+    const [ownerId, friend] = vi.mocked(store.insertFriend).mock.calls[0];
+    expect(ownerId).toBe(REMOTE.currentUser.id);
+    expect(friend).toMatchObject({ name: 'Grace Hopper', email: 'grace@x.com' });
+    expect(friend.id).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Survives the persist resolving.
+    expect(num('friends')).toBe(startCount + 1);
+  });
+
+  it('rolls back the new friend and toasts when the persist fails', async () => {
+    const warn = captureConsoleWarn();
+    vi.mocked(store.insertFriend).mockRejectedValueOnce(new Error('down'));
+    await renderReady();
+    const startCount = num('friends');
+
+    click('addFriend');
+    expect(num('friends')).toBe(startCount + 1);
+
+    await waitFor(() => expect(num('friends')).toBe(startCount));
     expect(screen.getByText(/Couldn.t save your change/)).toBeTruthy();
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('persist failed'),
