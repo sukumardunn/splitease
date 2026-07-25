@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import type { Database, Json } from '../lib/database.types';
 import { ActivityEvent } from './activityLog';
 import { toActivityAction, toActivityEntityType, toExpenseCategory } from './dbValidation';
-import { Expense, Friend, Group, Settlement, User } from '../types';
+import { Expense, Friend, Group, ImportBatch, Settlement, User } from '../types';
 import { generateAvatar } from '../utils/avatar';
 
 type Tables = Database['public']['Tables'];
@@ -21,6 +21,7 @@ type ExpensePayerRow = Tables['expense_payers']['Row'];
 type ExpenseSplitRow = Tables['expense_splits']['Row'];
 type SettlementRow = Tables['settlements']['Row'];
 type ActivityEventRow = Tables['activity_events']['Row'];
+type ImportBatchRow = Tables['import_batches']['Row'];
 
 // ---------- pure mappers (exported for unit tests) ----------
 
@@ -43,8 +44,23 @@ export function profileFromRow(row: ProfileRow): User {
   };
 }
 
-export function friendToRow(ownerId: string, f: Friend): Tables['friends']['Insert'] {
-  return { id: f.id, owner_id: ownerId, name: f.name, email: f.email, avatar: f.avatar };
+/**
+ * `importBatchId` tags a row as created by a bulk import (Phase 5a) so the whole
+ * import can be undone later. Null/omitted for anything the user hand-entered.
+ */
+export function friendToRow(
+  ownerId: string,
+  f: Friend,
+  importBatchId: string | null = null
+): Tables['friends']['Insert'] {
+  return {
+    id: f.id,
+    owner_id: ownerId,
+    name: f.name,
+    email: f.email,
+    avatar: f.avatar,
+    import_batch_id: importBatchId,
+  };
 }
 export function friendFromRow(row: FriendRow): Friend {
   return {
@@ -94,6 +110,7 @@ export function expenseToRow(ownerId: string, e: Expense): ExpenseRowBundle {
       group_id: e.groupId,
       notes: e.notes ?? null,
       deleted_at: e.deletedAt ?? null,
+      import_batch_id: e.importBatchId ?? null,
     },
     payers: (e.payers ?? []).map((p) => ({ expense_id: e.id, person_id: p.userId, amount: p.amount })),
     splits: e.splitWith.map((s) => ({ expense_id: e.id, person_id: s.userId, amount: s.amount })),
@@ -120,6 +137,19 @@ export function expenseFromRow(
     groupId: row.group_id,
     deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
     notes: row.notes ?? undefined,
+    importBatchId: row.import_batch_id,
+  };
+}
+
+export function importBatchFromRow(row: ImportBatchRow): ImportBatch {
+  return {
+    id: row.id,
+    source: row.source,
+    filename: row.filename,
+    expenseCount: row.expense_count,
+    friendCount: row.friend_count,
+    undoneAt: row.undone_at ? new Date(row.undone_at).toISOString() : row.undone_at,
+    createdAt: new Date(row.created_at).toISOString(),
   };
 }
 
@@ -216,10 +246,11 @@ export interface RemoteState {
   expenses: Expense[];
   settlements: Settlement[];
   activityEvents: ActivityEvent[];
+  importBatches: ImportBatch[];
 }
 
 export async function fetchAll(userId: string): Promise<RemoteState> {
-  const [profile, friends, groups, members, expenses, payers, splits, settlements, events] =
+  const [profile, friends, groups, members, expenses, payers, splits, settlements, events, batches] =
     await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
       supabase.from('friends').select('*').is('deleted_at', null).order('created_at'),
@@ -230,6 +261,7 @@ export async function fetchAll(userId: string): Promise<RemoteState> {
       supabase.from('expense_splits').select('*'),
       supabase.from('settlements').select('*').order('date', { ascending: false }),
       supabase.from('activity_events').select('*').order('created_at', { ascending: false }).limit(500),
+      supabase.from('import_batches').select('*').order('created_at', { ascending: false }),
     ]);
   if (profile.error) fail('fetch profile', profile.error.message);
   if (friends.error) fail('fetch friends', friends.error.message);
@@ -240,6 +272,7 @@ export async function fetchAll(userId: string): Promise<RemoteState> {
   if (splits.error) fail('fetch expense_splits', splits.error.message);
   if (settlements.error) fail('fetch settlements', settlements.error.message);
   if (events.error) fail('fetch activity_events', events.error.message);
+  if (batches.error) fail('fetch import_batches', batches.error.message);
 
   const payersByExpense = new Map<string, ExpensePayerRow[]>();
   for (const p of payers.data) {
@@ -269,6 +302,7 @@ export async function fetchAll(userId: string): Promise<RemoteState> {
     ),
     settlements: settlements.data.map(settlementFromRow),
     activityEvents: events.data.map(activityEventFromRow),
+    importBatches: batches.data.map(importBatchFromRow),
   };
 }
 
@@ -437,4 +471,160 @@ export async function importState(ownerId: string, payload: ImportPayload): Prom
     const { error } = await supabase.from('activity_events').insert(payload.activityEvents.map((ev) => activityEventToRow(ownerId, ev)));
     if (error) fail('import activity_events', error.message);
   }
+}
+
+// ---------- CSV import batches (Phase 5a) ----------
+
+export interface CsvImportPayload {
+  /** Friends the import creates. Already carry fresh uuids. */
+  friends: Friend[];
+  /** Expenses to create. Their `importBatchId` is set here, not by the caller. */
+  expenses: Expense[];
+  source?: string;
+  filename?: string;
+}
+
+/**
+ * Write a CSV import as one undoable batch: the batch row first (the FK target),
+ * then its friends, then its expenses and their payer/split children.
+ *
+ * Postgres transactions aren't reachable over the REST API, so a mid-way failure
+ * would otherwise leave a half-applied import behind. Every row created here
+ * carries the batch id, which makes the cleanup path exact: on failure we undo
+ * the batch we just started and rethrow, so the caller sees a clean error and
+ * the account is left as it was.
+ */
+export async function importCsvBatch(
+  ownerId: string,
+  batchId: string,
+  payload: CsvImportPayload
+): Promise<ImportBatch> {
+  const batchRow: Tables['import_batches']['Insert'] = {
+    id: batchId,
+    owner_id: ownerId,
+    source: payload.source ?? 'csv',
+    filename: payload.filename ?? '',
+    expense_count: payload.expenses.length,
+    friend_count: payload.friends.length,
+  };
+  const inserted = await supabase.from('import_batches').insert(batchRow).select('*').single();
+  if (inserted.error) fail('insert import_batch', inserted.error.message);
+
+  try {
+    if (payload.friends.length > 0) {
+      const { error } = await supabase
+        .from('friends')
+        .insert(payload.friends.map((f) => friendToRow(ownerId, f, batchId)));
+      if (error) fail('import batch friends', error.message);
+    }
+    const bundles = payload.expenses.map((e) =>
+      expenseToRow(ownerId, { ...e, importBatchId: batchId })
+    );
+    if (bundles.length > 0) {
+      const { error } = await supabase.from('expenses').insert(bundles.map((b) => b.expense));
+      if (error) fail('import batch expenses', error.message);
+      const payers = bundles.flatMap((b) => b.payers);
+      if (payers.length > 0) {
+        const { error: pe } = await supabase.from('expense_payers').insert(payers);
+        if (pe) fail('import batch expense_payers', pe.message);
+      }
+      const splits = bundles.flatMap((b) => b.splits);
+      if (splits.length > 0) {
+        const { error: se } = await supabase.from('expense_splits').insert(splits);
+        if (se) fail('import batch expense_splits', se.message);
+      }
+    }
+  } catch (err) {
+    // Best-effort cleanup. If it also fails, the original error is what the user
+    // needs to see, and the batch stays on record so undo remains available.
+    await undoImportBatch(batchId).catch((cleanupErr: unknown) => {
+      console.warn('SplitEase: could not clean up a failed import batch', cleanupErr);
+    });
+    throw err;
+  }
+
+  return importBatchFromRow(inserted.data);
+}
+
+export interface UndoImportResult {
+  expensesRemoved: number;
+  friendsRemoved: number;
+  /** Batch friends left in place because something outside the batch still uses them. */
+  friendsKept: number;
+}
+
+/**
+ * Undo an import wholesale: hard-delete the expenses it created (their payer and
+ * split rows go with them by FK cascade), then remove the friends it created.
+ *
+ * Two deliberate asymmetries:
+ *
+ *  - Expenses are hard-deleted, not soft-deleted. An import is a bulk mechanical
+ *    action, and dropping hundreds of rows into Recently Deleted would bury the
+ *    individually-deleted expenses that view exists to show. The batch record is
+ *    the audit trail instead.
+ *  - A batch friend is only removed if nothing outside the batch references
+ *    them. Once the user splits a hand-entered expense with an imported contact,
+ *    or adds them to a group, deleting them would leave those rows pointing at a
+ *    person who no longer exists (`person_id` has no FK — see the 4a migration,
+ *    so Postgres would not stop us).
+ *
+ * The batch row itself survives, stamped `undone_at`. Idempotent: undoing an
+ * already-undone batch removes nothing and succeeds.
+ */
+export async function undoImportBatch(batchId: string): Promise<UndoImportResult> {
+  // Zero rows is a legitimate outcome here (an already-undone batch, or one
+  // whose expenses the user purged by hand), so this is not row-count checked.
+  const expenses = await supabase
+    .from('expenses')
+    .delete()
+    .eq('import_batch_id', batchId)
+    .select('id');
+  if (expenses.error) fail('undo import expenses', expenses.error.message);
+
+  const batchFriends = await supabase.from('friends').select('id').eq('import_batch_id', batchId);
+  if (batchFriends.error) fail('undo import friends lookup', batchFriends.error.message);
+
+  let friendsRemoved = 0;
+  let friendsKept = 0;
+  if (batchFriends.data.length > 0) {
+    // Run AFTER the expense delete above, so shares that just went away don't
+    // count as references and needlessly preserve a friend.
+    const [splits, payers, settlements, members] = await Promise.all([
+      supabase.from('expense_splits').select('person_id'),
+      supabase.from('expense_payers').select('person_id'),
+      supabase.from('settlements').select('from_person_id, to_person_id'),
+      supabase.from('group_members').select('person_id'),
+    ]);
+    if (splits.error) fail('undo import splits lookup', splits.error.message);
+    if (payers.error) fail('undo import payers lookup', payers.error.message);
+    if (settlements.error) fail('undo import settlements lookup', settlements.error.message);
+    if (members.error) fail('undo import group members lookup', members.error.message);
+
+    const referenced = new Set<string>([
+      ...splits.data.map((s) => s.person_id),
+      ...payers.data.map((p) => p.person_id),
+      ...settlements.data.flatMap((s) => [s.from_person_id, s.to_person_id]),
+      ...members.data.map((m) => m.person_id),
+    ]);
+    const removable = batchFriends.data.map((f) => f.id).filter((id) => !referenced.has(id));
+    friendsKept = batchFriends.data.length - removable.length;
+
+    if (removable.length > 0) {
+      const { data, error } = await supabase.from('friends').delete().in('id', removable).select('id');
+      if (error) fail('undo import friends', error.message);
+      friendsRemoved = data?.length ?? 0;
+    }
+  }
+
+  await expectRowsAffected(
+    'stamp import batch undone',
+    supabase
+      .from('import_batches')
+      .update({ undone_at: new Date().toISOString() })
+      .eq('id', batchId)
+      .select('id')
+  );
+
+  return { expensesRemoved: expenses.data?.length ?? 0, friendsRemoved, friendsKept };
 }
