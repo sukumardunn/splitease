@@ -1,9 +1,10 @@
-import React from 'react';
-import { Trash2, StickyNote } from 'lucide-react';
+import React, { useState } from 'react';
+import { Trash2, StickyNote, Pencil } from 'lucide-react';
 import { Expense } from '../../types';
 import { useAppContext } from '../../context/AppContext';
 import { getExpenseIcon, formatDate } from '../../utils/helpers';
 import { useToast } from '../ui/Toast';
+import AddExpenseModal from './AddExpenseModal';
 
 interface ExpenseItemProps {
   expense: Expense;
@@ -12,6 +13,14 @@ interface ExpenseItemProps {
 const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
   const { currentUser, friends, groups, deleteExpense, restoreExpense } = useAppContext();
   const { showToast } = useToast();
+  // Held here rather than in each page so all three render sites (Dashboard,
+  // Expenses, GroupDetail) get editing for free, the way delete already works.
+  const [isEditing, setIsEditing] = useState(false);
+
+  // A settlement is a cash transfer, not a cost to re-split, and the expense
+  // form's category picker excludes `settlement` by construction — offering
+  // edit here would silently recategorise it on save.
+  const isSettlement = expense.category === 'settlement';
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -90,14 +99,34 @@ const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
         </div>
       </div>
 
+      {!isSettlement && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsEditing(true);
+          }}
+          aria-label={`Edit "${expense.description}"`}
+          className="flex-shrink-0 ml-3 p-2 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
+      )}
+
       <button
         type="button"
         onClick={handleDelete}
         aria-label={`Delete "${expense.description}"`}
-        className="flex-shrink-0 ml-3 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+        className="flex-shrink-0 ml-1 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
       >
         <Trash2 className="h-4 w-4" />
       </button>
+
+      <AddExpenseModal
+        isOpen={isEditing}
+        expense={expense}
+        onClose={() => setIsEditing(false)}
+      />
     </div>
   );
 };
