@@ -63,7 +63,9 @@ vi.mock('../../context/AppContext', () => ({
 
 vi.mock('../ui/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
-const prepareReceipt = vi.fn((_file: File) => Promise.resolve(ENCODED));
+// Signature given explicitly: `vi.fn(() => …)` infers a zero-argument mock, and
+// the real call site passes a File, which then fails to typecheck.
+const prepareReceipt = vi.fn<(file: File) => Promise<EncodedReceipt>>(() => Promise.resolve(ENCODED));
 vi.mock('../../services/receiptImage', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/receiptImage')>()),
   prepareReceipt: (file: File) => prepareReceipt(file),
