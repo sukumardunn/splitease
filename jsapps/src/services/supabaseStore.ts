@@ -497,44 +497,94 @@ export interface ImportPayload {
   activityEvents: ActivityEvent[];
 }
 
-/** Batch-insert an already-remapped local state. Parents before children. */
+/**
+ * The eight tables an import writes, in dependency order. Doubles as the key set
+ * for the per-table row counts the RPC returns, so the check below cannot forget
+ * a table that the payload builder remembers.
+ */
+const IMPORT_TABLES = [
+  'friends',
+  'groups',
+  'group_members',
+  'expenses',
+  'expense_payers',
+  'expense_splits',
+  'settlements',
+  'activity_events',
+] as const;
+
+type ImportCounts = Record<(typeof IMPORT_TABLES)[number], number>;
+
+/**
+ * Write an already-remapped local state to Postgres as one transaction.
+ *
+ * This used to be up to eight sequential REST inserts (friends → groups →
+ * group_members → expenses → expense_payers → expense_splits → settlements →
+ * activity_events). Each REST call is its own transaction and there was no
+ * try/catch, no compensating delete and no batch tag, so the import had seven
+ * half-applied stopping points and nothing afterwards distinguished an imported
+ * row from a hand-entered one — the user's stated fear, "midway failures leaving
+ * me hunting for expenses".
+ *
+ * The batch-tag-and-clean-up trick that `importCsvBatch` uses cannot cover this
+ * path: `activity_events` is append-only (only SELECT and INSERT policies as of
+ * 20260724000001), so a client-side compensating DELETE of step 8 is impossible.
+ * One `import_state` RPC — one plpgsql body, one transaction — is the only
+ * construction that makes all eight steps all-or-nothing. It is `security
+ * invoker`, so the same RLS policies still scope every row to the caller, and the
+ * function derives each child row's parent id from the parents it just inserted
+ * (see 20260725000006 for why definer would be a cross-tenant hole here in
+ * particular: every id in this payload is caller-chosen).
+ *
+ * Because nothing lands unless everything lands, a retry after a failure is safe
+ * even though `remapLocalState` mints fresh uuids per attempt — under the old code
+ * a retry duplicated whatever had already committed.
+ */
 export async function importState(ownerId: string, payload: ImportPayload): Promise<void> {
-  if (payload.friends.length > 0) {
-    const { error } = await supabase.from('friends').insert(payload.friends.map((f) => friendToRow(ownerId, f)));
-    if (error) fail('import friends', error.message);
-  }
   const groupBundles = payload.groups.map((g) => groupToRow(ownerId, g));
-  if (groupBundles.length > 0) {
-    const { error } = await supabase.from('groups').insert(groupBundles.map((b) => b.group));
-    if (error) fail('import groups', error.message);
-    const members = groupBundles.flatMap((b) => b.members);
-    if (members.length > 0) {
-      const { error: me } = await supabase.from('group_members').insert(members);
-      if (me) fail('import group_members', me.message);
-    }
-  }
   const expenseBundles = payload.expenses.map((e) => expenseToRow(ownerId, e));
-  if (expenseBundles.length > 0) {
-    const { error } = await supabase.from('expenses').insert(expenseBundles.map((b) => b.expense));
-    if (error) fail('import expenses', error.message);
-    const payers = expenseBundles.flatMap((b) => b.payers);
-    if (payers.length > 0) {
-      const { error: pe } = await supabase.from('expense_payers').insert(payers);
-      if (pe) fail('import expense_payers', pe.message);
+  // Same row bundles the REST version built, just flattened per table so the RPC
+  // receives one array each instead of one request each.
+  const rows = {
+    friends: payload.friends.map((f) => friendToRow(ownerId, f)),
+    groups: groupBundles.map((b) => b.group),
+    group_members: groupBundles.flatMap((b) => b.members),
+    expenses: expenseBundles.map((b) => b.expense),
+    expense_payers: expenseBundles.flatMap((b) => b.payers),
+    expense_splits: expenseBundles.flatMap((b) => b.splits),
+    settlements: payload.settlements.map((s) => settlementToRow(ownerId, s)),
+    activity_events: payload.activityEvents.map((ev) => activityEventToRow(ownerId, ev)),
+  };
+
+  const { data, error } = await supabase.rpc('import_state', {
+    // Always sent, empty arrays included — the function's own count check compares
+    // against what it was given, so an omitted bundle must read as "zero rows",
+    // never as "unspecified".
+    p_friends: rows.friends as unknown as Json,
+    p_groups: rows.groups as unknown as Json,
+    p_group_members: rows.group_members as unknown as Json,
+    p_expenses: rows.expenses as unknown as Json,
+    p_expense_payers: rows.expense_payers as unknown as Json,
+    p_expense_splits: rows.expense_splits as unknown as Json,
+    p_settlements: rows.settlements as unknown as Json,
+    p_activity_events: rows.activity_events as unknown as Json,
+  });
+  if (error) fail('import', error.message);
+
+  // The bulk equivalent of the `data !== e.id` guard on the single-row RPCs: the
+  // function returns per-table insert counts, and every one must equal what we
+  // sent. The function asserts the same thing internally and aborts the
+  // transaction if it does not hold — this side is the belt to that braces, since
+  // a check that only ran here could not fire until after the commit.
+  const counts = data as ImportCounts | null;
+  for (const table of IMPORT_TABLES) {
+    const sent = rows[table].length;
+    if (counts?.[table] !== sent) {
+      fail(
+        'import',
+        `${table}: imported ${counts?.[table] ?? 'no'} row(s) of ${sent} — import did not land as sent`
+      );
     }
-    const splits = expenseBundles.flatMap((b) => b.splits);
-    if (splits.length > 0) {
-      const { error: se } = await supabase.from('expense_splits').insert(splits);
-      if (se) fail('import expense_splits', se.message);
-    }
-  }
-  if (payload.settlements.length > 0) {
-    const { error } = await supabase.from('settlements').insert(payload.settlements.map((s) => settlementToRow(ownerId, s)));
-    if (error) fail('import settlements', error.message);
-  }
-  if (payload.activityEvents.length > 0) {
-    const { error } = await supabase.from('activity_events').insert(payload.activityEvents.map((ev) => activityEventToRow(ownerId, ev)));
-    if (error) fail('import activity_events', error.message);
   }
 }
 

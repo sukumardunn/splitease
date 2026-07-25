@@ -536,23 +536,51 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     return result;
   };
 
+  /**
+   * Run the one-time localStorage → cloud import.
+   *
+   * Two things here exist to stop a *second copy* of the data being imported.
+   *
+   * 1. `remapLocalState` mints fresh uuids on every call, so a second run inserts
+   *    a whole new set of rows rather than colliding with the first. `importState`
+   *    is now one transaction (20260725000006), so a failed attempt leaves nothing
+   *    behind and retrying is safe — but everything after it can still fail with
+   *    the import already committed. So the prompt is retired the moment the
+   *    import commits, before `fetchAll` gets a chance to throw, and the toast
+   *    distinguishes the two cases: "your local data is untouched" is only true
+   *    when the write itself failed.
+   * 2. `IMPORT_HANDLED_KEY` is re-read here, not just at load. `importCandidate`
+   *    is per-tab React state while the flag is shared localStorage, so a second
+   *    tab left open on the prompt would otherwise happily import again after the
+   *    first tab finished.
+   */
   const handleImport = () => {
     const candidate = importCandidate;
     if (!candidate) return;
+    if (localStorage.getItem(IMPORT_HANDLED_KEY) === '1') {
+      setImportCandidate(null);
+      return;
+    }
     setImportBusy(true);
+    let committed = false;
     Promise.resolve()
       .then(() => remapLocalState(candidate, userId))
       .then((remapped) => store.importState(userId, remapped))
-      .then(() => store.fetchAll(userId))
-      .then((remote) => {
-        applyState(remote);
+      .then(() => {
+        committed = true;
         localStorage.setItem(IMPORT_HANDLED_KEY, '1');
         clearState();
         setImportCandidate(null);
       })
+      .then(() => store.fetchAll(userId))
+      .then((remote) => applyState(remote))
       .catch((err: unknown) => {
         console.warn('SplitEase: import failed', err);
-        showToast({ message: "Import failed — your local data is untouched. Try again later." });
+        showToast({
+          message: committed
+            ? "Imported — but couldn't refresh the page. Reload to see your data."
+            : "Import failed — your local data is untouched. Try again later.",
+        });
       })
       .finally(() => setImportBusy(false));
   };

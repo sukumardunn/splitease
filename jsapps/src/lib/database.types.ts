@@ -91,6 +91,22 @@ export type Database = {
         Args: { p_group: Json; p_members?: Json };
         Returns: string | null;
       };
+      // Atomic one-time localStorage import (20260725000006): all eight tables in
+      // one transaction, so a mid-way failure leaves the account untouched.
+      // Returns per-table insert counts as jsonb for the caller to verify.
+      import_state: {
+        Args: {
+          p_friends?: Json;
+          p_groups?: Json;
+          p_group_members?: Json;
+          p_expenses?: Json;
+          p_expense_payers?: Json;
+          p_expense_splits?: Json;
+          p_settlements?: Json;
+          p_activity_events?: Json;
+        };
+        Returns: Json;
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
