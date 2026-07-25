@@ -1,4 +1,5 @@
 import type { ActivityEvent } from './services/activityLog';
+import type { SplitMode } from './services/splitEngine';
 
 export interface User {
   id: string;
@@ -43,6 +44,13 @@ export interface Expense {
    * otherwise silently detach the expense from its batch.
    */
   importBatchId?: string | null;
+  /**
+   * How the split was *chosen*, not just what it resolved to (`expenses.split_mode`,
+   * migration 20260725000005). Undefined means no intent was recorded — a row
+   * written before that migration, or a CSV import — and the edit form falls back
+   * to `inferSplitMode`, which can only recover `equal`.
+   */
+  splitMode?: SplitMode;
 }
 
 export interface Group {
@@ -120,3 +128,6 @@ export interface AppState {
 // Re-export the activity-log event type so consumers get it from the central
 // types module without reaching into services.
 export type { ActivityEvent };
+// `SplitMode` is declared next to the engine that resolves it, and re-exported
+// here because `Expense` now carries one.
+export type { SplitMode };

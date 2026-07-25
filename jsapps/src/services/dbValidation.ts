@@ -18,9 +18,13 @@
  *     money and drive balances.
  *   - `action` / `entity_type` degrade to 'unknown', which `describeActivity`
  *     renders explicitly. The audit row is kept rather than hidden.
+ *   - `split_mode` degrades to `undefined`, i.e. "no intent recorded", which is
+ *     exactly what the column's own NULL means and what the edit form already
+ *     knows how to handle (it infers a mode instead).
  */
 import type { ExpenseCategory } from '../types';
 import type { ActivityAction, ActivityEntityType } from './activityLog';
+import type { SplitMode } from './splitEngine';
 
 const EXPENSE_CATEGORIES: Record<ExpenseCategory, true> = {
   groceries: true,
@@ -59,6 +63,14 @@ const ACTIVITY_ENTITY_TYPES: Record<ActivityEntityType, true> = {
   friend: true,
   import: true,
   unknown: true,
+};
+
+const SPLIT_MODES: Record<SplitMode, true> = {
+  equal: true,
+  exact: true,
+  percentage: true,
+  shares: true,
+  adjustment: true,
 };
 
 /** `hasOwnProperty`, not `in` — `in` would accept inherited keys like 'constructor'. */
@@ -112,4 +124,22 @@ export function toActivityEntityType(value: string): ActivityEntityType {
   if (isActivityEntityType(value)) return value;
   warnOnce('activity entity type', value, 'unknown');
   return 'unknown';
+}
+
+export function isSplitMode(value: string): value is SplitMode {
+  return isMember(SPLIT_MODES, value);
+}
+
+/**
+ * `expenses.split_mode` -> `Expense.splitMode`.
+ *
+ * NULL is the ordinary case for older rows and CSV imports, so it is not warned
+ * about; a *non-null* value outside the union is a real anomaly and warns before
+ * degrading to the same "unknown" answer.
+ */
+export function toSplitMode(value: string | null): SplitMode | undefined {
+  if (value === null) return undefined;
+  if (isSplitMode(value)) return value;
+  warnOnce('split mode', value, 'unrecorded');
+  return undefined;
 }

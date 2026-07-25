@@ -23,6 +23,9 @@ import {
   appendActivityEvent,
   createActivityEvent,
 } from '../services/activityLog';
+import * as receiptStore from '../services/receiptStore';
+import type { Receipt, ReceiptIndex } from '../services/receiptStore';
+import type { EncodedReceipt } from '../services/receiptImage';
 import { loadState, clearState } from '../services/localStore';
 import { generateAvatar } from '../utils/avatar';
 import { remapLocalState, IMPORT_HANDLED_KEY } from '../services/importRemapper';
@@ -47,8 +50,32 @@ interface AppContextType {
   importBatches: ImportBatch[];
   /** Create a contact to split with. Friends are local contacts, not accounts. */
   addFriend: (friend: { name: string; email: string }) => void;
-  addExpense: (expense: Omit<Expense, 'id' | 'date'>) => void;
+  /**
+   * `receipt` is written straight after the expense row it belongs to, inside the
+   * same persist step, because it is an FK child and cannot land first. A new
+   * expense's id is generated here, so this is the only way the create path can
+   * attach one.
+   */
+  addExpense: (expense: Omit<Expense, 'id' | 'date'>, receipt?: EncodedReceipt) => void;
   updateExpense: (id: string, expense: Partial<Expense>) => void;
+  /**
+   * Which expenses have a receipt image, by expense id — **metadata only**, no
+   * bytes. This is what lets a row show a receipt button without the startup load
+   * dragging every image down with it (see `services/receiptStore.ts`).
+   */
+  receipts: ReceiptIndex;
+  /** Read one receipt's bytes, on demand. Null when the expense has none. */
+  loadReceipt: (expenseId: string) => Promise<Receipt | null>;
+  /**
+   * Attach or replace an expense's receipt.
+   *
+   * Not optimistic, and never rejects: a receipt is an attachment to an expense
+   * that has already been saved, so a failure here must not roll the expense
+   * back. It toasts and leaves the expense alone instead.
+   */
+  attachReceipt: (expenseId: string, receipt: EncodedReceipt) => Promise<void>;
+  /** Detach an expense's receipt. Same non-rejecting contract as `attachReceipt`. */
+  removeReceipt: (expenseId: string) => Promise<void>;
   /** Soft-delete: sets deletedAt; reversible via restoreExpense. */
   deleteExpense: (id: string) => void;
   restoreExpense: (id: string) => void;
@@ -100,6 +127,8 @@ interface AppContextProviderProps {
 }
 
 const SAVE_FAILED_MESSAGE = "Couldn't save your change — it was undone.";
+const RECEIPT_SAVE_FAILED_MESSAGE = "Couldn't save the receipt — the expense was saved without it.";
+const RECEIPT_REMOVE_FAILED_MESSAGE = "Couldn't remove the receipt — it's still attached.";
 
 export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children }) => {
   const { session } = useAuth();
@@ -107,6 +136,13 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   const userId = session?.user.id ?? '';
 
   const [state, setState] = useState<AppState | null>(null);
+  /**
+   * Receipt metadata, kept out of `AppState` on purpose. `AppState` is the
+   * persistable/importable shape (localStorage legacy import, `remapLocalState`),
+   * and receipts are neither — they are server-side attachments with no local
+   * counterpart. Bytes are never held here; `loadReceipt` fetches those.
+   */
+  const [receipts, setReceipts] = useState<ReceiptIndex>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [importCandidate, setImportCandidate] = useState<AppState | null>(null);
   const [importBusy, setImportBusy] = useState(false);
@@ -132,10 +168,36 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     setState(next);
   };
 
+  /**
+   * Refresh the receipt index. Metadata only, so this is cheap enough to run
+   * beside the main load and after any bulk change.
+   *
+   * Its failure is deliberately not `loadError`: a receipt index that could not
+   * be read costs the user a paperclip button, while `loadError` replaces the
+   * whole app with a retry screen. The expenses themselves are unaffected.
+   */
+  const refreshReceipts = (): Promise<void> =>
+    receiptStore
+      .fetchReceiptIndex()
+      .then(setReceipts)
+      .catch((err: unknown) => {
+        console.warn('SplitEase: could not load receipt metadata', err);
+      });
+
   useEffect(() => {
     let cancelled = false;
     if (!userId) return undefined;
     setLoadError(null);
+    // Rides along with the startup load rather than waiting for it: it is a
+    // separate, metadata-only query, and nothing in the main state depends on it.
+    receiptStore
+      .fetchReceiptIndex()
+      .then((index) => {
+        if (!cancelled) setReceipts(index);
+      })
+      .catch((err: unknown) => {
+        console.warn('SplitEase: could not load receipt metadata', err);
+      });
     store
       .fetchAll(userId)
       .then((remote) => {
@@ -224,7 +286,42 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     );
   };
 
-  const addExpense = (expense: Omit<Expense, 'id' | 'date'>) => {
+  /**
+   * Write a receipt and fold the result into the index.
+   *
+   * Swallows its own failure by design (see `attachReceipt`'s contract): the
+   * expense it belongs to has already been saved, so rolling anything back would
+   * be wrong, and the caller — a modal that has usually closed by now — has
+   * nowhere to show an error. A toast plus a `console.warn` is the honest report.
+   */
+  const saveReceipt = async (expenseId: string, encoded: EncodedReceipt): Promise<void> => {
+    try {
+      const meta = await receiptStore.upsertReceipt(userId, expenseId, encoded);
+      setReceipts((prev) => ({ ...prev, [expenseId]: meta }));
+    } catch (err) {
+      console.warn('SplitEase: could not save a receipt', err);
+      if (!signedOutRef.current) showToast({ message: RECEIPT_SAVE_FAILED_MESSAGE });
+    }
+  };
+
+  const removeReceipt = async (expenseId: string): Promise<void> => {
+    try {
+      await receiptStore.deleteReceipt(expenseId);
+      setReceipts((prev) => {
+        const next = { ...prev };
+        delete next[expenseId];
+        return next;
+      });
+    } catch (err) {
+      console.warn('SplitEase: could not remove a receipt', err);
+      if (!signedOutRef.current) showToast({ message: RECEIPT_REMOVE_FAILED_MESSAGE });
+    }
+  };
+
+  const loadReceipt = (expenseId: string): Promise<Receipt | null> =>
+    receiptStore.fetchReceipt(expenseId);
+
+  const addExpense = (expense: Omit<Expense, 'id' | 'date'>, receipt?: EncodedReceipt) => {
     const current = stateRef.current;
     if (!current) return;
     const newExpense: Expense = {
@@ -246,7 +343,13 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
         expenses: [newExpense, ...prev.expenses],
         activityEvents: appendActivityEvent(prev.activityEvents, event),
       }),
-      () => store.insertExpense(userId, newExpense),
+      async () => {
+        await store.insertExpense(userId, newExpense);
+        // Strictly after the parent: `expense_receipts.expense_id` is an FK, so
+        // the reverse order would fail. `saveReceipt` never throws, so a receipt
+        // problem cannot roll back an expense that saved cleanly.
+        if (receipt) await saveReceipt(newExpense.id, receipt);
+      },
       event
     );
   };
@@ -330,7 +433,17 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
         ...prev,
         expenses: prev.expenses.filter((e) => e.id !== id),
       }),
-      () => store.purgeExpense(id)
+      // The row's receipt goes with it by FK cascade, so the index entry has to
+      // go too — after the delete succeeds, so a rejected purge leaves it alone.
+      () =>
+        store.purgeExpense(id).then(() => {
+          setReceipts((prev) => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        })
     );
   };
 
@@ -533,6 +646,9 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       })
     );
     applyState(await store.fetchAll(userId));
+    // An undo hard-deletes the batch's expenses, and `expense_receipts` cascades
+    // with them, so the index has to be re-read rather than trusted.
+    await refreshReceipts();
     return result;
   };
 
@@ -669,6 +785,10 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     addFriend,
     addExpense,
     updateExpense,
+    receipts,
+    loadReceipt,
+    attachReceipt: saveReceipt,
+    removeReceipt,
     deleteExpense,
     restoreExpense,
     purgeExpense,

@@ -7,6 +7,8 @@ import {
   toActivityAction,
   toActivityEntityType,
   toExpenseCategory,
+  isSplitMode,
+  toSplitMode,
 } from './dbValidation';
 import { captureConsoleWarn } from '../test/console';
 
@@ -96,5 +98,33 @@ describe('toActivityEntityType', () => {
 
   it('rejects inherited Object properties', () => {
     expect(isActivityEntityType('constructor')).toBe(false);
+  });
+});
+
+describe('toSplitMode', () => {
+  it('passes through every mode the SplitMode union allows', () => {
+    for (const m of ['equal', 'exact', 'percentage', 'shares', 'adjustment'] as const) {
+      expect(isSplitMode(m)).toBe(true);
+      expect(toSplitMode(m)).toBe(m);
+    }
+  });
+
+  it('maps SQL NULL to undefined without warning — that is the ordinary case', () => {
+    // Every row written before 20260725000005, and every CSV import, has NULL
+    // here. Warning about those would fire once per legacy row.
+    const warn = captureConsoleWarn();
+    expect(toSplitMode(null)).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('degrades a non-null value outside the union to undefined, and warns', () => {
+    const warn = captureConsoleWarn();
+    expect(toSplitMode('weighted')).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('weighted'));
+  });
+
+  it('rejects inherited Object properties', () => {
+    expect(isSplitMode('constructor')).toBe(false);
+    expect(toSplitMode('toString')).toBeUndefined();
   });
 });

@@ -1,7 +1,8 @@
 // Hand-authored to match the migrations in supabase/migrations/ — currently
 // 20260719000001 (phase 4a) + 20260725000001 (phase 5a import batches)
 // + 20260725000002 (atomic expense update RPC)
-// + 20260725000003 (atomic group update RPC).
+// + 20260725000003 (atomic group update RPC)
+// + 20260725000005 (expense_receipts + expenses.split_mode).
 // T8 reconciles this against `supabase gen types typescript --local` (generator wins).
 export type Json =
   | string
@@ -39,9 +40,19 @@ export type Database = {
         Relationships: [];
       };
       expenses: {
-        Row: { id: string; owner_id: string; description: string; amount: number; paid_by: string; date: string; category: string; currency: string; group_id: string | null; notes: string | null; deleted_at: string | null; created_at: string; import_batch_id: string | null };
-        Insert: { id?: string; owner_id: string; description: string; amount: number; paid_by: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
-        Update: { id?: string; owner_id?: string; description?: string; amount?: number; paid_by?: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null };
+        Row: { id: string; owner_id: string; description: string; amount: number; paid_by: string; date: string; category: string; currency: string; group_id: string | null; notes: string | null; deleted_at: string | null; created_at: string; import_batch_id: string | null; split_mode: string | null };
+        Insert: { id?: string; owner_id: string; description: string; amount: number; paid_by: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null; split_mode?: string | null };
+        Update: { id?: string; owner_id?: string; description?: string; amount?: number; paid_by?: string; date?: string; category?: string; currency?: string; group_id?: string | null; notes?: string | null; deleted_at?: string | null; created_at?: string; import_batch_id?: string | null; split_mode?: string | null };
+        Relationships: [];
+      };
+      // Receipt images, stored in Postgres rather than a Storage bucket
+      // (20260725000005). `data_base64` is the image payload WITHOUT a `data:`
+      // URI prefix, and is never selected by the startup load — see
+      // services/receiptStore.ts.
+      expense_receipts: {
+        Row: { expense_id: string; owner_id: string; mime_type: string; byte_size: number; data_base64: string; created_at: string };
+        Insert: { expense_id: string; owner_id: string; mime_type: string; byte_size: number; data_base64: string; created_at?: string };
+        Update: { expense_id?: string; owner_id?: string; mime_type?: string; byte_size?: number; data_base64?: string; created_at?: string };
         Relationships: [];
       };
       expense_payers: {
