@@ -308,42 +308,37 @@ export async function fetchAll(userId: string): Promise<RemoteState> {
 
 // ---------- expense writes ----------
 
-async function writeExpenseChildren(bundle: ExpenseRowBundle): Promise<void> {
-  if (bundle.payers.length > 0) {
-    const { error } = await supabase.from('expense_payers').insert(bundle.payers);
-    if (error) fail('insert expense_payers', error.message);
-  }
-  if (bundle.splits.length > 0) {
-    const { error } = await supabase.from('expense_splits').insert(bundle.splits);
-    if (error) fail('insert expense_splits', error.message);
-  }
-}
-
-export async function insertExpense(ownerId: string, e: Expense): Promise<void> {
-  const bundle = expenseToRow(ownerId, e);
-  const { error } = await supabase.from('expenses').insert(bundle.expense);
-  if (error) fail('insert expense', error.message);
-  await writeExpenseChildren(bundle);
-}
-
 /**
- * Edit an expense: upsert the parent and *replace* its payer/split rows.
+ * Write an expense and its payer/split rows as one transaction.
  *
- * Done in one `update_expense_with_children` RPC rather than four REST calls
- * (upsert, delete payers, delete splits, re-insert). Each REST call is its own
- * transaction, so a failure landing after the deletes left the expense with zero
- * splits while AppContext rolled back only its in-memory snapshot and told the
- * user the change "was undone" — the debt then vanished on the next fetchAll.
- * The function body is a single transaction, so the replace is all-or-nothing.
+ * Both creating and editing an expense go through here, and through the single
+ * `update_expense_with_children` RPC, rather than issuing a parent request
+ * followed by child requests. Each REST call is its own transaction, so the
+ * multi-call versions could half-apply:
  *
- * The function is `security invoker`, so the same RLS policies that gate direct
- * writes still apply: it cannot reach another owner's expense (see the
- * 20260725000002 migration for why definer would be a cross-tenant hole).
+ *  - create: parent landed, children did not — an expense with no split rows, so
+ *    a debt nobody owes, reachable from the ordinary Add Expense flow;
+ *  - edit: the deletes landed, the re-insert did not — the same empty expense,
+ *    reached from the other direction.
  *
- * Signature is unchanged from the four-call version on purpose — AppContext
- * calls this the same way.
+ * In both cases AppContext rolled back only its in-memory snapshot and told the
+ * user the change "was undone", then the truth surfaced on the next fetchAll. The
+ * function body is one transaction, so the write is all-or-nothing instead.
+ *
+ * The function upserts, so a fresh id takes its insert path and an existing id
+ * takes its update path — one code path covers both callers. It is
+ * `security invoker`, so the RLS policies that gate direct writes still apply and
+ * it cannot reach another owner's expense (see 20260725000002 for why definer
+ * would be a cross-tenant hole).
+ *
+ * `context` only picks the error prefix, so a failed create still reads as
+ * "insert expense: ..." and a failed edit as "update expense: ...".
  */
-export async function updateExpense(ownerId: string, e: Expense): Promise<void> {
+async function writeExpenseWithChildren(
+  context: 'insert expense' | 'update expense',
+  ownerId: string,
+  e: Expense
+): Promise<void> {
   const bundle = expenseToRow(ownerId, e);
   const { data, error } = await supabase.rpc('update_expense_with_children', {
     p_expense: bundle.expense as unknown as Json,
@@ -352,13 +347,22 @@ export async function updateExpense(ownerId: string, e: Expense): Promise<void> 
     p_payers: bundle.payers as unknown as Json,
     p_splits: bundle.splits as unknown as Json,
   });
-  if (error) fail('update expense', error.message);
+  if (error) fail(context, error.message);
   // Same guard as `expectRowsAffected`, adapted to an RPC: the function returns
   // the id it wrote, and returns null if the upsert matched nothing. Anything
   // other than the id we asked for means our write did not land.
   if (data !== e.id) {
-    fail('update expense', 'no rows affected — row is missing or not permitted by row-level security');
+    fail(context, 'no rows affected — row is missing or not permitted by row-level security');
   }
+}
+
+/** Signatures unchanged from the multi-call versions — AppContext calls these the same way. */
+export async function insertExpense(ownerId: string, e: Expense): Promise<void> {
+  await writeExpenseWithChildren('insert expense', ownerId, e);
+}
+
+export async function updateExpense(ownerId: string, e: Expense): Promise<void> {
+  await writeExpenseWithChildren('update expense', ownerId, e);
 }
 
 export async function setExpenseDeleted(id: string, deletedAt: string | null): Promise<void> {
@@ -401,18 +405,37 @@ export async function insertGroup(ownerId: string, g: Group): Promise<void> {
   }
 }
 
+/**
+ * Edit a group: upsert the parent and *replace* its member rows.
+ *
+ * Done in one `update_group_with_members` RPC rather than three REST calls
+ * (upsert, delete members, re-insert). Each REST call is its own transaction, so a
+ * failure landing after the delete left the group alive with zero members while
+ * AppContext rolled back only its in-memory snapshot and told the user the change
+ * "was undone" — every balance derived from that group then emptied out on the
+ * next fetchAll. The function body is a single transaction, so the replace is
+ * all-or-nothing.
+ *
+ * `security invoker`, so the same RLS policies that gate direct writes still
+ * apply — `groups_own` on the parent and `group_members_via_parent` on the
+ * children, which is the same owner-via-parent shape the expense children use.
+ * See the 20260725000003 migration for why definer would be a cross-tenant hole.
+ *
+ * Signature is unchanged from the three-call version on purpose.
+ */
 export async function updateGroup(ownerId: string, g: Group): Promise<void> {
   const bundle = groupToRow(ownerId, g);
-  await expectRowsAffected(
-    'update group',
-    supabase.from('groups').upsert(bundle.group).select('id')
-  );
-  // May legitimately affect zero rows (a group with no members yet).
-  const del = await supabase.from('group_members').delete().eq('group_id', g.id);
-  if (del.error) fail('replace group_members', del.error.message);
-  if (bundle.members.length > 0) {
-    const { error: me } = await supabase.from('group_members').insert(bundle.members);
-    if (me) fail('insert group_members', me.message);
+  const { data, error } = await supabase.rpc('update_group_with_members', {
+    p_group: bundle.group as unknown as Json,
+    // Always sent, empty included: an empty array is how a caller empties a group.
+    p_members: bundle.members as unknown as Json,
+  });
+  if (error) fail('update group', error.message);
+  // The RPC equivalent of `expectRowsAffected`: the function returns the id it
+  // wrote and null if the upsert matched nothing, so anything other than the id we
+  // asked for means our write did not land.
+  if (data !== g.id) {
+    fail('update group', 'no rows affected — row is missing or not permitted by row-level security');
   }
 }
 
