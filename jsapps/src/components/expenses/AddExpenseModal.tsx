@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { X, DollarSign, Percent, DivideSquare, Hash, SlidersHorizontal } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
-import { ExpenseCategory } from '../../types';
+import { Expense, ExpenseCategory } from '../../types';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   resolveSplit,
   validateSplits,
@@ -14,6 +15,11 @@ import { CATEGORY_LABELS, EXPENSE_CATEGORIES } from '../../services/analytics';
 interface AddExpenseModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * When provided, the form edits this expense in place instead of creating a
+   * new one. This is `updateExpense`'s only UI caller.
+   */
+  expense?: Expense;
 }
 
 const SPLIT_MODES: { value: SplitMode; label: string; icon: React.ElementType }[] = [
@@ -24,18 +30,120 @@ const SPLIT_MODES: { value: SplitMode; label: string; icon: React.ElementType }[
   { value: 'adjustment', label: 'Adjustment (+/-)', icon: SlidersHorizontal },
 ];
 
-const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) => {
-  const { friends, groups, currentUser, addExpense } = useAppContext();
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState<ExpenseCategory>('other');
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [payerIds, setPayerIds] = useState<string[]>([currentUser.id]);
-  const [payerValues, setPayerValues] = useState<Record<string, string>>({});
-  const [splitMode, setSplitMode] = useState<SplitMode>('equal');
-  const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
-  const [splitValues, setSplitValues] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState('');
+/**
+ * An expense stores its *resolved* per-person amounts, never the mode that
+ * produced them, so opening one for edit has to infer a mode. Only `equal` is
+ * worth recovering — it keeps the split rebalancing if the amount is changed —
+ * and it is claimed only when the stored splits match `resolveSplit`'s equal
+ * output cent-for-cent. Everything else seeds `exact`, which round-trips any
+ * split losslessly no matter what produced it (percentage, shares, import).
+ */
+function inferSplitMode(expense: Expense, participants: string[]): SplitMode {
+  const stored = new Map(expense.splitWith.map((s) => [s.userId, s.amount]));
+  if (stored.size !== participants.length) return 'exact';
+  const equal = resolveSplit({
+    totalAmount: expense.amount,
+    participants,
+    mode: 'equal',
+    values: {},
+  });
+  return equal.every((s) => stored.get(s.userId) === s.amount) ? 'equal' : 'exact';
+}
+
+interface FormSeed {
+  description: string;
+  amount: string;
+  category: ExpenseCategory;
+  groupId: string | null;
+  notes: string;
+  payerIds: string[];
+  payerValues: Record<string, string>;
+  splitMode: SplitMode;
+  selectedFriends: string[];
+  splitValues: Record<string, string>;
+}
+
+/**
+ * Initial form state — blank for a new expense, or unpacked from an existing
+ * one for an edit. Exported so the unpacking can be tested without a DOM.
+ */
+export function deriveFormSeed(currentUserId: string, expense?: Expense): FormSeed {
+  if (!expense) {
+    return {
+      description: '',
+      amount: '',
+      category: 'other',
+      groupId: null,
+      notes: '',
+      payerIds: [currentUserId],
+      payerValues: {},
+      splitMode: 'equal',
+      selectedFriends: [],
+      splitValues: {},
+    };
+  }
+
+  // The form always puts the current user first and hardcodes them into the
+  // split list, so participants are rebuilt in that order regardless of how the
+  // stored splits happen to be sorted.
+  const selectedFriends = expense.splitWith
+    .map((s) => s.userId)
+    .filter((id) => id !== currentUserId);
+  const splitMode = inferSplitMode(expense, [currentUserId, ...selectedFriends]);
+
+  const splitValues: Record<string, string> = {};
+  if (splitMode === 'exact') {
+    for (const s of expense.splitWith) splitValues[s.userId] = String(s.amount);
+  }
+  const payerValues: Record<string, string> = {};
+  for (const p of expense.payers ?? []) payerValues[p.userId] = String(p.amount);
+
+  return {
+    description: expense.description,
+    amount: String(expense.amount),
+    category: expense.category,
+    groupId: expense.groupId ?? null,
+    notes: expense.notes ?? '',
+    payerIds: expense.payers?.length
+      ? expense.payers.map((p) => p.userId)
+      : [expense.paidBy],
+    payerValues,
+    splitMode,
+    selectedFriends,
+    splitValues,
+  };
+}
+
+const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose, expense }) => {
+  if (!isOpen) return null;
+  // `ExpenseForm` seeds its state in `useState` initialisers, which only run on
+  // mount — and every existing call site keeps this modal permanently mounted
+  // while toggling `isOpen`. Mounting the form per open (and per target
+  // expense) is what makes that seeding correct; it also lets the focus trap
+  // take initial focus, which it cannot do if the dialog appears after mount.
+  return <ExpenseForm key={expense?.id ?? 'new'} onClose={onClose} expense={expense} />;
+};
+
+interface ExpenseFormProps {
+  onClose: () => void;
+  expense?: Expense;
+}
+
+const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
+  const { friends, groups, currentUser, addExpense, updateExpense } = useAppContext();
+  const isEdit = !!expense;
+  const [seed] = useState(() => deriveFormSeed(currentUser.id, expense));
+  const { containerRef, onKeyDown } = useFocusTrap<HTMLDivElement>({ onEscape: onClose });
+  const [description, setDescription] = useState(seed.description);
+  const [amount, setAmount] = useState(seed.amount);
+  const [category, setCategory] = useState<ExpenseCategory>(seed.category);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(seed.groupId);
+  const [payerIds, setPayerIds] = useState<string[]>(seed.payerIds);
+  const [payerValues, setPayerValues] = useState<Record<string, string>>(seed.payerValues);
+  const [splitMode, setSplitMode] = useState<SplitMode>(seed.splitMode);
+  const [selectedFriends, setSelectedFriends] = useState<string[]>(seed.selectedFriends);
+  const [splitValues, setSplitValues] = useState<Record<string, string>>(seed.splitValues);
+  const [notes, setNotes] = useState(seed.notes);
 
   // Sourced from the shared label map so the picker here and the Analytics
   // category chart can't drift apart. `settlement` is excluded by construction.
@@ -126,21 +234,31 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
     const paidBy = payerIds[0];
     const payers = payerIds.length > 1 ? payersList : undefined;
 
-    addExpense({
+    const fields = {
       description,
       amount: totalAmount,
       paidBy,
+      // `undefined` rather than omitted, so dropping back to a single payer
+      // clears any payers the expense used to have.
       payers,
       splitWith: splits,
       category,
-      currency: 'USD',
       groupId: selectedGroup,
       // undefined rather than '' so the row mapper writes SQL NULL for "no note".
       notes: notes.trim() || undefined,
-    });
+    };
+
+    if (expense) {
+      // Deliberately not sending `date` or `importBatchId`: an edit keeps the
+      // original date, and `updateExpense` patches onto the stored expense, so
+      // the import batch link survives (see the note on `Expense.importBatchId`).
+      updateExpense(expense.id, fields);
+    } else {
+      addExpense({ ...fields, currency: 'USD' });
+    }
 
     onClose();
-    resetForm();
+    if (!expense) resetForm();
   };
 
   const resetForm = () => {
@@ -155,8 +273,6 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
     setSplitValues({});
     setNotes('');
   };
-
-  if (!isOpen) return null;
 
   const splitUnitLabel = (mode: SplitMode): string => {
     switch (mode) {
@@ -175,12 +291,23 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div
+        ref={containerRef}
+        onKeyDown={onKeyDown}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="expense-modal-title"
+        className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+      >
         <div className="p-6 border-b border-gray-200">
           <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold text-gray-800">Add Expense</h2>
+            <h2 id="expense-modal-title" className="text-2xl font-bold text-gray-800">
+              {isEdit ? 'Edit Expense' : 'Add Expense'}
+            </h2>
             <button
+              type="button"
               onClick={onClose}
+              aria-label="Close"
               className="text-gray-500 hover:text-gray-700 transition-colors"
             >
               <X className="h-6 w-6" />
@@ -485,7 +612,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
               disabled={!canSubmit}
               className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Add Expense
+              {isEdit ? 'Save Changes' : 'Add Expense'}
             </button>
           </div>
         </form>
