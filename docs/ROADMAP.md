@@ -142,23 +142,58 @@ verdict; the doc names the queries that settle them.
   `supabase/config.toml`, so the repo root is now the only answer and
   `supabase db reset` from `jsapps/` can no longer apply the wrong schema. README
   §3 and [`RLS_AUDIT.md`](RLS_AUDIT.md) finding 1 both updated.
-- **`importState` — being made atomic now** (user decision 2026-07-25: *"make it
-  atomic as well. i dont want any midway failures to leave me hunting for
-  expenses"*). It writes friends → groups → members → expenses → payers → splits →
-  settlements → events as **eight sequential REST inserts, each its own
-  transaction**, with no `try/catch` and no cleanup, so there are seven half-applied
-  stopping points. Note a compensating-cleanup fix of the `importCsvBatch` kind is
-  *structurally impossible* here: `activity_events` has only SELECT and INSERT
-  policies as of `20260724000001` (append-only by design), so the client cannot
-  delete step 8. One `security invoker` function taking the whole payload is the
-  only path that covers it.
-  **Related bug, found while mapping this:** on failure `handleImport` leaves
-  `IMPORT_HANDLED_KEY` unset and `importCandidate` non-null, so the prompt stays
-  open and Import can be pressed again — and because `remapLocalState` runs inside
-  the promise chain and mints fresh uuids per attempt, a retry after a partial
-  failure inserts a **second copy** of everything that already landed. The toast's
-  "your local data is untouched" is true of localStorage but not of the cloud.
-  Atomicity should make the retry safe by construction.
+- ~~**`importState` is the last non-atomic multi-table write.**~~ **Fixed** on the
+  user's instruction (*"make it atomic as well. i dont want any midway failures to
+  leave me hunting for expenses"*). It used to write friends → groups → members →
+  expenses → payers → splits → settlements → events as **eight sequential REST
+  inserts, each its own transaction**, with no `try/catch` and no cleanup — seven
+  half-applied stopping points, and afterwards nothing distinguished an imported
+  row from a hand-entered one. Migration `20260725000006` adds
+  `public.import_state`, a `security invoker` plpgsql function whose body is one
+  transaction, called over a single `supabase.rpc`.
+
+  A compensating-cleanup fix of the `importCsvBatch` kind was *structurally
+  impossible* here: `activity_events` has only SELECT and INSERT policies as of
+  `20260724000001` (append-only by design), so the client can never delete step 8.
+  One transaction was the only construction that covers all eight.
+
+  Verified live with real user JWTs: a forced failure at step 6 **and** at step 8
+  each left all eight tables at zero, while the old REST sequence under the same
+  step-6 failure committed 2 friends, 2 groups, 3 members, 2 expenses and 2 payers.
+  Cross-tenant `owner_id` spoofing → `42501`; attaching children to another owner's
+  parent, or filing an expense under their group, → `23503` *before any write is
+  attempted* (the join drops foreign parents, so the count assertion fires and RLS
+  never gets asked — stronger than a policy rejection, but a different SQLSTATE
+  than the sibling RPCs return). `anon` has no EXECUTE. Also driven end-to-end in a
+  real browser, including the failure path and an in-session retry.
+  **`security invoker` is load-bearing — never switch it to `definer`;** every id
+  in the payload is caller-chosen and eight tables are in reach, so definer would
+  be an unrestricted cross-tenant write primitive, forged audit-log rows included.
+
+  **Two retry holes atomicity alone did not close, also fixed:** the import is now
+  retired the instant it commits rather than after `fetchAll` (a blip there used to
+  leave the prompt live with the data already in Postgres, and since
+  `remapLocalState` mints fresh uuids per attempt, pressing Import again inserted a
+  second full copy), and `IMPORT_HANDLED_KEY` is re-read on click so a second tab
+  cannot import again. The toast now distinguishes "your local data is untouched"
+  (write failed) from "Imported — but couldn't refresh" (write committed).
+
+  **Still open, both narrow:** (i) a *truly concurrent* double-press across two
+  tabs, both clicking before either write returns, still yields two copies — the
+  import is all-or-nothing but not *idempotent*, since each attempt mints fresh
+  uuids and there is no natural key to dedupe on. Closing it needs a DB-side
+  marker, e.g. an `imports` row unique on `owner_id` written inside the same
+  transaction. (ii) The `remoteEmpty` guard checks friends/groups/expenses/
+  settlements but **not `activityEvents`**, so local state containing only activity
+  events keeps the guard true forever and a different browser holding its own copy
+  would be re-offered the import.
+- **⚠️ `import_state` needs `split_mode` added.** It names 12 `expenses` columns
+  explicitly (deliberately — so a column added by a sibling migration cannot break
+  it), which means once `split_mode` exists an imported expense silently takes the
+  column *default* instead of the mode the user chose. Fix is a `create or replace`
+  adding it to that list — the signature is unchanged, so the grants survive —
+  paired with the client payload change. Decide at the same time whether receipts
+  should participate in an import at all.
 - **`insertExpense`/`insertGroup` are now upserts, not inserts.** A repeat of the
   *same* client-generated id updates instead of raising `23505`, which makes a
   retry idempotent — a net gain, and a collision with another owner's id still
@@ -278,6 +313,9 @@ verdict; the doc names the queries that settle them.
   usable for applying migrations — there is no `supabase` CLI or `psql` on this
   machine).
 - Migrations are append-only. Never edit an applied file; add a new one.
+- **`20260725000006` (atomic `import_state`) is applied to the hosted project** and
+  verified with real user JWTs, including both forced-failure cases, four
+  cross-tenant rejections and the `anon` EXECUTE check.
 - **All migrations through `20260725000004` are applied to the hosted project**
 (`…0002` atomic expense write, `…0003` atomic group write, `…0004` revoking
 `anon` EXECUTE on both). Each was applied in a transaction and verified
