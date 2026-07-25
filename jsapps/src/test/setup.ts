@@ -1,6 +1,11 @@
 /**
  * Vitest global setup.
  *
+ * Two environment gaps are patched here: jsdom's Web Storage (below) and
+ * `Blob.prototype.text` (at the bottom).
+ *
+ * ## Web Storage
+ *
  * Re-attaches jsdom's Web Storage to `globalThis` so the suite runs on any
  * Node version.
  *
@@ -40,4 +45,25 @@ if (jsdom) {
       writable: true,
     });
   }
+}
+
+/**
+ * `Blob.prototype.text()` — part of the File API since 2019 and available in
+ * every browser this app targets, but still unimplemented by jsdom 25
+ * (jsdom/jsdom#2555). Without it, any component that reads an uploaded file
+ * (`CsvImportModal`) fails in tests for a reason that has nothing to do with the
+ * code under test.
+ *
+ * Implemented over `FileReader`, which jsdom does provide, rather than reshaping
+ * the app to avoid the standard API.
+ */
+if (typeof Blob !== 'undefined' && typeof Blob.prototype.text !== 'function') {
+  Blob.prototype.text = function text(this: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error('Could not read the file.'));
+      reader.readAsText(this);
+    });
+  };
 }

@@ -268,7 +268,7 @@ export function parseAmount(raw: string): number | null {
   const trimmed = raw.trim();
   if (trimmed === '' || trimmed === '-') return 0;
   const negated = /^\(.*\)$/.test(trimmed);
-  const cleaned = trimmed.replace(/[()]/g, '').replace(/[^0-9.\-]/g, '');
+  const cleaned = trimmed.replace(/[()]/g, '').replace(/[^0-9.-]/g, '');
   if (cleaned === '' || cleaned === '-') return null;
   const value = Number(cleaned);
   if (!Number.isFinite(value)) return null;
