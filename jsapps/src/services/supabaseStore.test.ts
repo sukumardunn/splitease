@@ -23,6 +23,8 @@ describe('expense mapping', () => {
     splitWith: [{ userId: OWNER, amount: 15 }],
     date: '2026-01-01T00:00:00.000Z', category: 'dining', currency: 'USD',
     groupId: null, deletedAt: null, notes: 'yum',
+    // Hand-entered expenses read back with an explicit null batch tag.
+    importBatchId: null,
   };
 
   it('round-trips an expense with payers and notes', () => {

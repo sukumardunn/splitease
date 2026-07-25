@@ -15,6 +15,7 @@ const sample: AppState = {
   ],
   settlements: [],
   activityEvents: [],
+  importBatches: [],
 };
 
 describe('localStore', () => {
