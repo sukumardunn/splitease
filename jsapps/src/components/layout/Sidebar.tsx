@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, Receipt, UserPlus, PieChart, Activity, Trash2, LogOut } from 'lucide-react';
+import { Home, Users, Receipt, UserPlus, PieChart, BarChart3, Activity, Trash2, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useAppContext } from '../../context/AppContext';
 import { summarizeBalances } from '../../services/splitEngine';
@@ -21,6 +21,10 @@ const Sidebar: React.FC = () => {
     { path: '/groups', label: 'Groups', icon: Users },
     { path: '/expenses', label: 'Expenses', icon: Receipt },
     { path: '/friends', label: 'Friends', icon: UserPlus },
+    // BarChart3, not the PieChart already imported here — that one is
+    // decorative in the Overall Balance card below and reusing it would make
+    // the nav item look like a second entry point to the same thing.
+    { path: '/analytics', label: 'Analytics', icon: BarChart3 },
     { path: '/activity', label: 'Activity', icon: Activity },
     { path: '/recently-deleted', label: 'Recently Deleted', icon: Trash2 },
   ];

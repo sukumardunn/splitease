@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, StickyNote } from 'lucide-react';
 import { Expense } from '../../types';
 import { useAppContext } from '../../context/AppContext';
 import { getExpenseIcon, formatDate } from '../../utils/helpers';
@@ -59,14 +59,25 @@ const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
       
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-start">
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-medium text-gray-900 truncate">
               {expense.description}
             </h3>
             <p className="text-xs text-gray-500">
-              {formatDate(expense.date)} 
+              {formatDate(expense.date)}
               {group && <span> • {group.name}</span>}
             </p>
+            {expense.notes && (
+              // Truncated to keep the row one height; `title` exposes the rest,
+              // since there is no expense detail view to link to yet.
+              <p
+                className="mt-0.5 flex items-center gap-1 text-xs text-gray-400 italic"
+                title={expense.notes}
+              >
+                <StickyNote className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                <span className="truncate">{expense.notes}</span>
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className={`text-sm font-semibold ${youPaid ? 'text-green-600' : 'text-red-600'}`}>
