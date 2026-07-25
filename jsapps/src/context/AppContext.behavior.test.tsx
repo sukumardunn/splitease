@@ -423,4 +423,67 @@ describe('AppContext one-time import', () => {
     await renderReady();
     expect(screen.queryByText(/import your existing data/i)).toBeNull();
   });
+
+  /**
+   * A second import inserts a whole second copy of the data — `remapLocalState`
+   * mints fresh uuids per attempt, so there is nothing to collide with. Whether a
+   * retry is offered is therefore a data-integrity question, not a UX one.
+   *
+   * `importState` is atomic (one transaction, 20260725000006), so a failure of the
+   * write itself leaves the cloud untouched and re-offering is correct. Anything
+   * that fails *after* the commit must not re-offer.
+   */
+  describe('never imports twice', () => {
+    async function offerImport() {
+      vi.mocked(store.fetchAll).mockResolvedValueOnce(structuredClone(EMPTY_REMOTE));
+      vi.mocked(localStore.loadState).mockReturnValue(LOCAL_LEGACY_STATE);
+      localStorage.removeItem(IMPORT_HANDLED_KEY);
+      renderApp();
+      expect(await screen.findByText(/import your existing data/i)).toBeTruthy();
+    }
+
+    it('retires the prompt as soon as the import commits, even if the refetch then fails', async () => {
+      const warn = captureConsoleWarn();
+      await offerImport();
+      // The write lands; only the follow-up refresh breaks.
+      vi.mocked(store.fetchAll).mockRejectedValueOnce(new Error('network'));
+
+      clickButton('Import');
+
+      await waitFor(() => expect(localStorage.getItem(IMPORT_HANDLED_KEY)).toBe('1'));
+      await waitFor(() => expect(screen.queryByText(/import your existing data/i)).toBeNull());
+      expect(store.importState).toHaveBeenCalledTimes(1);
+      expect(localStore.clearState).toHaveBeenCalled();
+      // And the user is not told their data is untouched, because it is not.
+      expect(screen.queryByText(/local data is untouched/i)).toBeNull();
+      expect(screen.getByText(/Reload to see your data/i)).toBeTruthy();
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it('keeps the prompt and leaves local data alone when the atomic write fails', async () => {
+      const warn = captureConsoleWarn();
+      await offerImport();
+      vi.mocked(store.importState).mockRejectedValueOnce(new Error('boom'));
+
+      clickButton('Import');
+
+      await waitFor(() => expect(screen.getByText(/local data is untouched/i)).toBeTruthy());
+      expect(localStorage.getItem(IMPORT_HANDLED_KEY)).toBeNull();
+      expect(localStore.clearState).not.toHaveBeenCalled();
+      // Retrying is safe precisely because nothing landed.
+      expect(screen.queryByText(/import your existing data/i)).toBeTruthy();
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it('refuses a second import when another tab already handled it', async () => {
+      await offerImport();
+      // `importCandidate` is per-tab React state; the flag is shared localStorage.
+      localStorage.setItem(IMPORT_HANDLED_KEY, '1');
+
+      clickButton('Import');
+
+      await waitFor(() => expect(screen.queryByText(/import your existing data/i)).toBeNull());
+      expect(store.importState).not.toHaveBeenCalled();
+    });
+  });
 });
