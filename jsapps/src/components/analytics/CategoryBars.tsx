@@ -1,12 +1,10 @@
 import React from 'react';
-import { CategorySlice, percentageShares } from '../../services/analytics';
+import { CategorySlice, categoryTotal, percentageShares } from '../../services/analytics';
 import { formatCurrency } from '../../utils/helpers';
 import { SPEND_MARK, TRACK, barPercent } from './chartTokens';
 
 interface CategoryBarsProps {
   slices: CategorySlice[];
-  /** Sum of all slices, used for the share-of-total column. */
-  total: number;
 }
 
 /**
@@ -17,8 +15,21 @@ interface CategoryBarsProps {
  * names the measure. Every value is directly labeled, which makes this readable
  * without hover and gives screen readers the numbers as ordinary text.
  */
-const CategoryBars: React.FC<CategoryBarsProps> = ({ slices, total }) => {
+const CategoryBars: React.FC<CategoryBarsProps> = ({ slices }) => {
   const max = slices.length > 0 ? slices[0].total : 0;
+  // The denominator is derived from the slices, never passed in. A caller-
+  // supplied total (this card used to take `summarizeSpend().total`) is a second
+  // independently computed aggregate: if it ever drifts from the slices, the
+  // percentages stop summing to 100 and nothing in the rendered card reveals it.
+  //
+  // So the percentages mean **share of the categories shown in this card**.
+  // Today that is identical to the period's total spend, because every expense
+  // that counts as spending falls in exactly one category — see `categoryTotal`
+  // for why the two aggregates cannot diverge. If this card is ever handed a
+  // subset of the breakdown (a category filter, a top-N cut), the identity
+  // breaks and the column means share-of-shown: relabel the card, don't restore
+  // a second aggregate.
+  const total = categoryTotal(slices);
   // Apportioned across the whole column rather than rounded row by row, so the
   // percentages sum to 100 instead of to 99 or 101. Index-aligned with
   // `slices`, which `totalsByCategory` already orders stably.

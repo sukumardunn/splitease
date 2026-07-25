@@ -217,7 +217,11 @@ const Analytics: React.FC = () => {
                   </tbody>
                 </table>
               ) : (
-                <CategoryBars slices={categories} total={summary.total} />
+                /* `CategoryBars` derives its own percentage denominator by
+                   summing these slices — deliberately not `summary.total`, so
+                   the card cannot print percentages that disagree with the
+                   dollar figures beside them. */
+                <CategoryBars slices={categories} />
               )}
             </Card>
 
