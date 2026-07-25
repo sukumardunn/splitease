@@ -4,7 +4,9 @@
  * These are Tailwind utility class names rather than hex values on purpose:
  * written as static strings they survive Tailwind's static extraction. Do NOT
  * build them dynamically (`bg-${hue}-600`) — that pattern silently produces no
- * CSS, and there is already one instance of the bug in `ExpenseItem.tsx`.
+ * CSS. `ExpenseItem.tsx` used to do it and its category chips rendered
+ * transparent for it; the fix was the static map in `utils/categoryColors.ts`,
+ * which is the shape to copy if you need per-value colours.
  *
  * ## Palette provenance — validated, not eyeballed
  *
