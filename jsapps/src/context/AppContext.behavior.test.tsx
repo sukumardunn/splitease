@@ -100,6 +100,7 @@ function Harness() {
     addExpense,
     deleteExpense,
     restoreExpense,
+    purgeExpense,
     settleDebt,
   } = useAppContext();
 
@@ -141,6 +142,10 @@ function Harness() {
         }
       >
         add
+      </button>
+      <span data-testid="order">{expenses.map((e) => e.description).join(',')}</span>
+      <button data-testid="purgeMid" onClick={() => expenses[1] && purgeExpense(expenses[1].id)}>
+        purgeMid
       </button>
       <button data-testid="del" onClick={() => newest && deleteExpense(newest.id)}>
         del
@@ -352,6 +357,178 @@ describe('AppContext Phase 2/3 behaviour', () => {
       expect.stringContaining('persist failed'),
       expect.any(Error)
     );
+  });
+});
+
+/**
+ * Rollback granularity (was 4b item 5). A failed write used to restore a
+ * whole-`AppState` snapshot taken before it started, which also discarded any
+ * other optimistic mutation made while it was in flight.
+ *
+ * Checked, not assumed: with `mutate`'s catch temporarily reverted to
+ * `applyState(prev)` with no refetch, **the first three tests below fail** — the
+ * two historical bugs (a committed write wiped off the screen; an already-undone
+ * change resurrected by a later rollback) plus the missing reconcile. The last
+ * two **pass either way** and are guards on the new mechanism rather than
+ * reproductions: there was no refetch to gate before, and a whole-state restore
+ * preserved list position for free. The pre-existing rollback tests above also
+ * pass either way, because they only ever have one write in flight — which is
+ * exactly why they never caught this.
+ */
+describe('AppContext scoped rollback', () => {
+  beforeEach(() => {
+    // Call counts, not implementations (that would be `resetAllMocks`). These
+    // tests assert how many times `fetchAll` ran, and the mocks are module-level
+    // so counts otherwise accumulate across every test in the file.
+    vi.clearAllMocks();
+    authState.session = SIGNED_IN;
+    vi.mocked(store.fetchAll).mockResolvedValue(structuredClone(REMOTE));
+  });
+
+  /** A persist we can settle by hand, to hold a write in flight. */
+  function deferred() {
+    let settle!: { resolve: () => void; reject: (e: Error) => void };
+    const promise = new Promise<void>((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+    return { promise, ...settle };
+  }
+
+  it('keeps a concurrent write that already succeeded when a later one fails', async () => {
+    // The headline bug: the friend below is committed in Postgres, and a
+    // whole-state rollback wiped it off the screen anyway, with no refetch to
+    // put it back.
+    captureConsoleWarn();
+    const expenseWrite = deferred();
+    vi.mocked(store.insertExpense).mockReturnValueOnce(expenseWrite.promise);
+    // Model a server that really did accept the friend, so the reconciling
+    // refetch returns it. Without this the stub "persists" nothing and the
+    // refetch would honestly report it missing — which would be the mock lying,
+    // not the rollback misbehaving.
+    vi.mocked(store.insertFriend).mockImplementationOnce(async (_ownerId, friend) => {
+      vi.mocked(store.fetchAll).mockResolvedValue({
+        ...structuredClone(REMOTE),
+        friends: [...structuredClone(REMOTE).friends, friend],
+      });
+    });
+
+    await renderReady();
+    const friendsStart = num('friends');
+
+    click('add'); // in flight, will fail
+    click('addFriend'); // snapshotted AFTER the expense, succeeds
+    await waitFor(() => expect(store.insertFriend).toHaveBeenCalled());
+    expect(num('friends')).toBe(friendsStart + 1);
+
+    await act(async () => {
+      expenseWrite.reject(new Error('down'));
+      await expenseWrite.promise.catch(() => {});
+    });
+
+    await waitFor(() => expect(num('active')).toBe(0)); // the expense is undone...
+    expect(num('friends')).toBe(friendsStart + 1); // ...and the friend survived
+    expect(screen.getByTestId('newestFriend').textContent).toBe('Grace Hopper');
+  });
+
+  it('does not resurrect a change that already failed and was undone', async () => {
+    // Whole-state rollback restored a different point in history per mutation, so
+    // the LAST failure won: rolling back the friend reinstated the snapshot that
+    // still contained the expense whose own write had already failed.
+    captureConsoleWarn();
+    const expenseWrite = deferred();
+    const friendWrite = deferred();
+    vi.mocked(store.insertExpense).mockReturnValueOnce(expenseWrite.promise);
+    vi.mocked(store.insertFriend).mockReturnValueOnce(friendWrite.promise);
+
+    await renderReady();
+    const friendsStart = num('friends');
+
+    click('add');
+    click('addFriend');
+    expect(num('active')).toBe(1);
+    expect(num('friends')).toBe(friendsStart + 1);
+
+    await act(async () => {
+      expenseWrite.reject(new Error('expense down'));
+      await expenseWrite.promise.catch(() => {});
+    });
+    await waitFor(() => expect(num('active')).toBe(0));
+
+    await act(async () => {
+      friendWrite.reject(new Error('friend down'));
+      await friendWrite.promise.catch(() => {});
+    });
+    await waitFor(() => expect(num('friends')).toBe(friendsStart));
+
+    // Both are gone. The expense must NOT have come back.
+    expect(num('active')).toBe(0);
+    expect(screen.getByTestId('top').textContent).toBe('');
+  });
+
+  it('refetches after a failed write, so the UI cannot sit on a stale picture', async () => {
+    captureConsoleWarn();
+    vi.mocked(store.insertExpense).mockRejectedValueOnce(new Error('down'));
+    await renderReady();
+    expect(store.fetchAll).toHaveBeenCalledTimes(1); // the initial load
+
+    // Something the server knows about that this session never saw. Only a
+    // reconciling refetch can surface it.
+    vi.mocked(store.fetchAll).mockResolvedValue({
+      ...structuredClone(REMOTE),
+      expenses: [structuredClone(SOME_EXPENSE)],
+    });
+
+    click('add');
+    await waitFor(() => expect(store.fetchAll).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('top').textContent).toBe('Pre-existing'));
+    expect(num('active')).toBe(1); // the optimistic 'Coffee' is gone, the server row is here
+  });
+
+  it('holds the refetch until no other write is in flight', async () => {
+    // Refetching mid-flight would yank a pending write's optimistic row off the
+    // screen, then have it reappear when that write lands.
+    captureConsoleWarn();
+    const expenseWrite = deferred();
+    vi.mocked(store.insertExpense).mockReturnValueOnce(expenseWrite.promise);
+    vi.mocked(store.insertFriend).mockRejectedValueOnce(new Error('down'));
+
+    await renderReady();
+    expect(store.fetchAll).toHaveBeenCalledTimes(1);
+
+    click('add'); // stays in flight
+    click('addFriend'); // fails straight away
+    await waitFor(() => expect(screen.getByText(/Couldn.t save your change/)).toBeTruthy());
+
+    // Rolled the friend back, but did NOT refetch — the expense write is pending.
+    expect(store.fetchAll).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('top').textContent).toBe('Coffee');
+
+    await act(async () => {
+      expenseWrite.resolve();
+      await expenseWrite.promise;
+    });
+    expect(screen.getByTestId('top').textContent).toBe('Coffee');
+    expect(store.fetchAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts a purged row back at the position it held', async () => {
+    captureConsoleWarn();
+    const three = ['First', 'Second', 'Third'].map((description, i) => ({
+      ...structuredClone(SOME_EXPENSE),
+      id: `ffffffff-0000-4000-8000-00000000000${i + 3}`,
+      description,
+    }));
+    vi.mocked(store.fetchAll).mockResolvedValue({ ...structuredClone(REMOTE), expenses: three });
+    vi.mocked(store.purgeExpense).mockRejectedValueOnce(new Error('down'));
+
+    await renderReady();
+    await waitFor(() => expect(screen.getByTestId('order').textContent).toBe('First,Second,Third'));
+
+    click('purgeMid');
+    expect(screen.getByTestId('order').textContent).toBe('First,Third');
+
+    // Restored in place — not appended as 'First,Third,Second'.
+    await waitFor(() => expect(screen.getByTestId('order').textContent).toBe('First,Second,Third'));
   });
 });
 
