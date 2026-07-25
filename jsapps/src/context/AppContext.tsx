@@ -126,6 +126,83 @@ interface AppContextProviderProps {
   children: ReactNode;
 }
 
+/**
+ * What a single mutation touched, so its failure can be undone without
+ * disturbing anything else in `AppState`.
+ *
+ * A discriminated union rather than a `collection: string` + `before: unknown`,
+ * so `rollbackTarget` below cannot put a `Group` into `expenses` and still
+ * typecheck.
+ *
+ * `before` is the row as it was before this mutation, or `null` when the
+ * mutation *created* the row (rolling back then means removing it). `index` is
+ * the position `before` held, consulted only when the row has to be
+ * re-inserted — i.e. after a failed purge — so an undone hard delete does not
+ * silently move the row to the end of the list.
+ */
+type MutationTarget =
+  | { collection: 'friends'; id: string; before: Friend | null; index: number }
+  | { collection: 'groups'; id: string; before: Group | null; index: number }
+  | { collection: 'expenses'; id: string; before: Expense | null; index: number }
+  | { collection: 'settlements'; id: string; before: Settlement | null; index: number };
+
+/**
+ * Undo one row's optimistic change against whatever the state is *now*, rather
+ * than restoring a whole-state snapshot from before the mutation.
+ *
+ * That distinction is the entire point. The old code captured the whole
+ * `AppState` and reinstated it wholesale, which discarded any *other* optimistic
+ * mutation applied in the meantime — so a write that had already succeeded could
+ * vanish from the screen while its row sat committed in Postgres, and because
+ * each rollback restored a different point in history, the last one to fail
+ * could resurrect an earlier change that had already been undone.
+ */
+function rollbackRow<T extends { id: string }>(
+  rows: T[],
+  id: string,
+  before: T | null,
+  index: number
+): T[] {
+  if (!before) return rows.filter((row) => row.id !== id);
+  if (rows.some((row) => row.id === id)) {
+    return rows.map((row) => (row.id === id ? before : row));
+  }
+  // The mutation removed the row (a purge) and the write failed, so put it back
+  // where it was instead of appending it.
+  const restored = [...rows];
+  restored.splice(Math.min(index, restored.length), 0, before);
+  return restored;
+}
+
+/**
+ * Roll back `target` in `state`, and drop the activity event the mutation
+ * optimistically appended.
+ *
+ * The event is removed by id for the same reason the row is: `activityEvents` is
+ * a shared append-only list, so a sibling mutation's event may well have been
+ * appended after this one and must survive.
+ */
+function rollbackTarget(state: AppState, target: MutationTarget, eventId?: string): AppState {
+  const activityEvents = eventId
+    ? state.activityEvents.filter((event) => event.id !== eventId)
+    : state.activityEvents;
+  const { id, index } = target;
+  switch (target.collection) {
+    case 'friends':
+      return { ...state, activityEvents, friends: rollbackRow(state.friends, id, target.before, index) };
+    case 'groups':
+      return { ...state, activityEvents, groups: rollbackRow(state.groups, id, target.before, index) };
+    case 'expenses':
+      return { ...state, activityEvents, expenses: rollbackRow(state.expenses, id, target.before, index) };
+    case 'settlements':
+      return {
+        ...state,
+        activityEvents,
+        settlements: rollbackRow(state.settlements, id, target.before, index),
+      };
+  }
+}
+
 const SAVE_FAILED_MESSAGE = "Couldn't save your change — it was undone.";
 const RECEIPT_SAVE_FAILED_MESSAGE = "Couldn't save the receipt — the expense was saved without it.";
 const RECEIPT_REMOVE_FAILED_MESSAGE = "Couldn't remove the receipt — it's still attached.";
@@ -162,6 +239,13 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   useEffect(() => {
     signedOutRef.current = !session;
   }, [session]);
+  /**
+   * How many optimistic writes are still in flight. Read by `reconcile` to decide
+   * whether a post-failure refetch is safe: server state does not yet contain the
+   * rows those writes are optimistically showing, so refetching mid-flight would
+   * make them blink out and back.
+   */
+  const inFlightRef = useRef(0);
 
   const applyState = (next: AppState | null) => {
     stateRef.current = next;
@@ -223,16 +307,25 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   }, [userId]);
 
   /**
-   * Optimistic-online mutation: apply locally now, persist async, roll back the
-   * entire prior state + toast on failure. The optional activity event is
-   * persisted best-effort AFTER the primary write succeeds (its failure never
-   * rolls back the primary mutation).
-   * Rollback restores a whole-state snapshot taken before this mutation, so it
-   * also discards any other optimistic mutation applied after that snapshot
-   * (accepted Phase-4a tradeoff; UI may diverge from the DB until the next
-   * refetch if that other mutation's own persist succeeded).
+   * Optimistic-online mutation: apply locally now, persist async, undo just this
+   * row + toast on failure. The optional activity event is persisted best-effort
+   * AFTER the primary write succeeds (its failure never rolls back the primary
+   * mutation).
+   *
+   * Rollback is scoped to `target` — see `rollbackTarget`. It deliberately does
+   * NOT restore a whole-state snapshot: nothing here serialises the mutators, so
+   * a snapshot taken before this write would also undo any *other* optimistic
+   * change made while it was in flight.
+   *
+   * Known limit, unchanged by this: two mutations racing on the *same* row still
+   * resolve last-write-wins in the database, and rolling back the first would
+   * clobber the second's value for that row. Fixing that needs writes to be
+   * serialised (a mutation queue) rather than merely scoped — see
+   * `docs/ROADMAP.md`. This function is the seam where that would go, which is
+   * why the narrowing lives here and not in twelve callers' catch handlers.
    */
   const mutate = (
+    target: MutationTarget,
     updater: (prev: AppState) => AppState,
     persist: () => Promise<void>,
     event?: ActivityEvent
@@ -240,17 +333,51 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
     const prev = stateRef.current;
     if (!prev) return;
     applyState(updater(prev));
+    inFlightRef.current += 1;
     persist()
       .then(() => {
+        inFlightRef.current -= 1;
         if (event) recordEvent(event);
       })
       .catch((err: unknown) => {
+        // Decremented before the rollback so `reconcile` below sees an accurate
+        // in-flight count for *other* writes, not including this settled one.
+        inFlightRef.current -= 1;
         console.warn('SplitEase: persist failed, rolling back', err);
-        applyState(prev);
+        const current = stateRef.current;
+        if (current) applyState(rollbackTarget(current, target, event?.id));
         // Signed out mid-flight: the change is moot and the toast would land on
-        // the login screen, so roll back silently.
+        // the login screen, so roll back silently and do not refetch.
         if (signedOutRef.current) return;
         showToast({ message: SAVE_FAILED_MESSAGE });
+        reconcile();
+      });
+  };
+
+  /**
+   * Re-read the server after a failed write so the UI cannot sit on a stale
+   * picture indefinitely. Scoped rollback fixes *what* is undone; this fixes how
+   * long a divergence can last, and the two are independent — a rollback is a
+   * guess about the server's state, this is the answer.
+   *
+   * Skipped while another write is still in flight: that write's optimistic row
+   * is not in the database yet, so refetching would yank it off the screen and
+   * then have it reappear when the write lands. Skipped when signed out because
+   * `fetchAll` would 401 and this provider is unmounting anyway.
+   *
+   * A failure here is logged, not surfaced as `loadError` — that would replace
+   * the whole app with a retry screen over a *refresh* that failed, having
+   * already told the user their change was undone.
+   */
+  const reconcile = (): void => {
+    if (inFlightRef.current > 0 || signedOutRef.current || !userId) return;
+    store
+      .fetchAll(userId)
+      .then((remote) => {
+        if (!signedOutRef.current) applyState(remote);
+      })
+      .catch((err: unknown) => {
+        console.warn('SplitEase: could not refresh after a failed write', err);
       });
   };
 
@@ -276,6 +403,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after: newFriend,
     });
     mutate(
+      { collection: 'friends', id: newFriend.id, before: null, index: current.friends.length },
       (prev) => ({
         ...prev,
         friends: [...prev.friends, newFriend],
@@ -338,6 +466,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after: newExpense,
     });
     mutate(
+      { collection: 'expenses', id: newExpense.id, before: null, index: 0 },
       (prev) => ({
         ...prev,
         expenses: [newExpense, ...prev.expenses],
@@ -369,6 +498,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after,
     });
     mutate(
+      { collection: 'expenses', id, before, index: current.expenses.indexOf(before) },
       (prev) => ({
         ...prev,
         expenses: prev.expenses.map((e) => (e.id === id ? after : e)),
@@ -393,6 +523,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       before,
     });
     mutate(
+      { collection: 'expenses', id, before, index: current.expenses.indexOf(before) },
       (prev) => ({
         ...prev,
         expenses: prev.expenses.map((e) => (e.id === id ? { ...e, deletedAt } : e)),
@@ -417,6 +548,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after,
     });
     mutate(
+      { collection: 'expenses', id, before: target, index: current.expenses.indexOf(target) },
       (prev) => ({
         ...prev,
         expenses: prev.expenses.map((e) => (e.id === id ? after : e)),
@@ -428,7 +560,15 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   };
 
   const purgeExpense = (id: string) => {
+    const current = stateRef.current;
+    if (!current) return;
+    // Read before the optimistic filter removes it: a failed purge has to put the
+    // row back, and at the position it held.
+    const index = current.expenses.findIndex((e) => e.id === id);
+    const before = current.expenses[index];
+    if (!before) return;
     mutate(
+      { collection: 'expenses', id, before, index },
       (prev) => ({
         ...prev,
         expenses: prev.expenses.filter((e) => e.id !== id),
@@ -459,6 +599,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after: newGroup,
     });
     mutate(
+      { collection: 'groups', id: newGroup.id, before: null, index: 0 },
       (prev) => ({
         ...prev,
         groups: [newGroup, ...prev.groups],
@@ -484,6 +625,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after,
     });
     mutate(
+      { collection: 'groups', id, before, index: current.groups.indexOf(before) },
       (prev) => ({
         ...prev,
         groups: prev.groups.map((g) => (g.id === id ? after : g)),
@@ -508,6 +650,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       before,
     });
     mutate(
+      { collection: 'groups', id, before, index: current.groups.indexOf(before) },
       (prev) => ({
         ...prev,
         groups: prev.groups.map((g) => (g.id === id ? { ...g, deletedAt } : g)),
@@ -532,6 +675,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after,
     });
     mutate(
+      { collection: 'groups', id, before: target, index: current.groups.indexOf(target) },
       (prev) => ({
         ...prev,
         groups: prev.groups.map((g) => (g.id === id ? after : g)),
@@ -543,7 +687,13 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
   };
 
   const purgeGroup = (id: string) => {
+    const current = stateRef.current;
+    if (!current) return;
+    const index = current.groups.findIndex((g) => g.id === id);
+    const before = current.groups[index];
+    if (!before) return;
     mutate(
+      { collection: 'groups', id, before, index },
       (prev) => ({
         ...prev,
         groups: prev.groups.filter((g) => g.id !== id),
@@ -578,6 +728,7 @@ export const AppContextProvider: React.FC<AppContextProviderProps> = ({ children
       after: settlement,
     });
     mutate(
+      { collection: 'settlements', id: settlement.id, before: null, index: 0 },
       (prev) => ({
         ...prev,
         settlements: [settlement, ...prev.settlements],
