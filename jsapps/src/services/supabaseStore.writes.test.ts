@@ -50,36 +50,27 @@ import {
   purgeGroup,
   setExpenseDeleted,
   setGroupDeleted,
-  updateExpense,
   updateGroup,
 } from './supabaseStore';
-import type { Expense, Group } from '../types';
+import type { Group } from '../types';
 
 const OWNER = 'aaaaaaaa-0000-4000-8000-000000000001';
 const ID = 'bbbbbbbb-0000-4000-8000-000000000001';
 
-const EXPENSE: Expense = {
-  id: ID,
-  description: 'Dinner',
-  amount: 30,
-  paidBy: OWNER,
-  splitWith: [{ userId: OWNER, amount: 30 }],
-  date: '2026-01-01T00:00:00.000Z',
-  category: 'dining',
-  currency: 'USD',
-  groupId: null,
-  deletedAt: null,
-};
-
 const GROUP: Group = { id: ID, name: 'Trip', members: [OWNER], avatar: 'a.png', deletedAt: null };
 
-/** Every write whose WHERE clause can silently match nothing. */
+/**
+ * Every REST write whose WHERE clause can silently match nothing.
+ *
+ * `updateExpense` is deliberately absent: it goes through the
+ * `update_expense_with_children` RPC now, and its equivalent no-op check (the
+ * function returning the id it wrote) is covered in supabaseStore.expenseRpc.test.ts.
+ */
 const VERIFIED_WRITES: { name: string; run: () => Promise<void> }[] = [
   { name: 'setExpenseDeleted', run: () => setExpenseDeleted(ID, '2026-01-01T00:00:00.000Z') },
   { name: 'purgeExpense', run: () => purgeExpense(ID) },
   { name: 'setGroupDeleted', run: () => setGroupDeleted(ID, '2026-01-01T00:00:00.000Z') },
   { name: 'purgeGroup', run: () => purgeGroup(ID) },
-  { name: 'updateExpense', run: () => updateExpense(OWNER, EXPENSE) },
   { name: 'updateGroup', run: () => updateGroup(OWNER, GROUP) },
 ];
 
