@@ -22,33 +22,17 @@ before claiming anything.
 | 3 | Splitwise-parity split engine, multi-payer, settle-up, debt simplification | `services/splitEngine.ts` |
 | 4a | Supabase cutover: schema + RLS, auth, optimistic-online context, one-time local→cloud import | `services/supabaseStore.ts`, `context/`, `supabase/migrations/20260719000001_*` |
 | 4b | 11 of 12 backlog items (see [`PHASE4B_BACKLOG.md`](PHASE4B_BACKLOG.md)) | merge `855b282` |
+| — | **Add Friend flow** (P0, found during the 4b smoke): the two buttons had no handler and no `addFriend`/`insertFriend` existed, so a new user could not add anyone to split with. Gave `friend.add` its first producer. Also fixed broken `<img>` avatars — `profiles.avatar`/`friends.avatar` default to `''`, now backfilled with a generated initials SVG at the mapper boundary. Extracted `useFocusTrap` and shared it with `ImportPrompt`. | `a5c198b` |
 
-**Gate as of 4b:** 170 tests, green on Node 20 **and** 26; typecheck, build, and
-lint clean (3 pre-existing `react-refresh` warnings, 0 errors).
+**Gate as of the Add Friend merge:** 200 tests, green on Node 20 **and** 26;
+typecheck, build, and lint clean (3 pre-existing `react-refresh` warnings,
+0 errors). The Add Friend flow was also driven end-to-end in a real browser on a
+fresh signup: add friend → split a $50 expense → $25 owed, reflected in the
+sidebar, debt simplification, and Friends page, and persisted across reloads.
 
 ---
 
 ## Remaining — in priority order
-
-### P0 — "Add Friend" is a dead button (NOT part of any numbered phase)
-
-**Found during 4b browser smoke.** `pages/Friends.tsx` renders two *"Add Friend"*
-buttons (lines ~64 and ~167) with **no `onClick` handler at all**. There is no
-`addFriend` on `AppContext` and no `insertFriend` in `supabaseStore`. The
-`'friend.add'` `ActivityAction` exists and `describeActivity` handles it, but
-nothing ever emits it.
-
-Consequence: a freshly signed-up user **cannot add anyone**, so they cannot split
-an expense with another person — the app's core purpose. The empty state even
-reads "Add a friend to start tracking shared expenses" next to an inert button.
-Friends currently only appear if inserted straight into Postgres.
-
-Scope to fix:
-- `supabaseStore.insertFriend` (+ soft-delete/purge if the UI needs them)
-- `AppContext.addFriend`, going through `mutate` so it is optimistic + rolls back,
-  emitting the `friend.add` activity event
-- An add-friend modal (name + email), wired to both buttons
-- Tests: context behaviour, store mapping, and the modal
 
 ### P1 — Phase 5: Import (CSV → screenshot)
 
