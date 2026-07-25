@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { Plus, Filter, Search, Calendar, Receipt } from 'lucide-react';
+import { Plus, Filter, Search, Calendar, Receipt, FileUp } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import ExpenseItem from '../components/expenses/ExpenseItem';
 import { Expense, ExpenseCategory } from '../types';
 import AddExpenseModal from '../components/expenses/AddExpenseModal';
+import CsvImportModal from '../components/import/CsvImportModal';
 
 const Expenses: React.FC = () => {
   const { expenses } = useAppContext();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | 'all'>('all');
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   
   // Sort expenses by date (newest first)
   const sortedExpenses = [...expenses].sort(
@@ -68,13 +70,23 @@ const Expenses: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
         
-        <button 
-          onClick={() => setIsExpenseModalOpen(true)}
-          className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200 md:self-end"
-        >
-          <Plus className="h-5 w-5 mr-2" />
-          <span>Add Expense</span>
-        </button>
+        <div className="flex gap-2 md:self-end">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+          >
+            <FileUp className="h-5 w-5 mr-2" />
+            <span>Import CSV</span>
+          </button>
+
+          <button
+            onClick={() => setIsExpenseModalOpen(true)}
+            className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            <span>Add Expense</span>
+          </button>
+        </div>
       </div>
       
       {/* Search and filters */}
@@ -145,13 +157,22 @@ const Expenses: React.FC = () => {
                 : "You haven't added any expenses yet."}
             </p>
             {!searchQuery && categoryFilter === 'all' && (
-              <button 
-                onClick={() => setIsExpenseModalOpen(true)}
-                className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200 mx-auto"
-              >
-                <Plus className="h-5 w-5 mr-2" />
-                <span>Add Expense</span>
-              </button>
+              <div className="flex justify-center gap-2">
+                <button
+                  onClick={() => setIsExpenseModalOpen(true)}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+                >
+                  <Plus className="h-5 w-5 mr-2" />
+                  <span>Add Expense</span>
+                </button>
+                <button
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg flex items-center transition-colors duration-200"
+                >
+                  <FileUp className="h-5 w-5 mr-2" />
+                  <span>Import CSV</span>
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -160,6 +181,11 @@ const Expenses: React.FC = () => {
       <AddExpenseModal
         isOpen={isExpenseModalOpen}
         onClose={() => setIsExpenseModalOpen(false)}
+      />
+
+      <CsvImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
       />
     </div>
   );
