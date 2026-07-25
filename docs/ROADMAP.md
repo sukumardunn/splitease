@@ -186,10 +186,30 @@ verdict; the doc names the queries that settle them.
   silently done nothing for half the modals. That also fixed a latent bug: those
   two never took *initial* focus either, invisible because their tests only ever
   render them already open.
-- **Whole-state rollback granularity** (4b item 5) — **still open, awaiting the
-  user's choice of concurrency model.** A failed write restores the entire state
-  snapshot, discarding any concurrent in-flight optimistic update. A spec'd 4a
-  tradeoff, commented in `AppContext.tsx:163-172`.
+- **Whole-state rollback granularity** (4b item 5) — **DECIDED 2026-07-25:
+  per-entity snapshots + refetch-on-failure now; a mutation queue only if/when
+  offline support is wanted.** A failed write restores the entire state snapshot,
+  discarding any concurrent in-flight optimistic update. A spec'd 4a tradeoff,
+  commented in `AppContext.tsx:163-172`.
+
+  **⚠️ Implement the narrowing INSIDE `mutate()`** — give it an entity descriptor
+  and keep the rollback logic in that one function. Do **not** hand-write twelve
+  bespoke `catch` handlers. This was an explicit condition of the decision: the
+  user asked how much of this work is wasted when a mutation queue lands later,
+  and the answer is "only the splice body, ~30–50 lines" *precisely because* all
+  12 mutators funnel through one chokepoint and a queue would replace that same
+  function's internals. Twelve bespoke handlers would turn a cheap swap into a
+  twelve-site unwind.
+
+  Also decided: **refetch after a failed write** (`fetchAll` on the rollback path).
+  Roughly ten lines, and it is what stops the UI *lingering* on a stale lie —
+  neither rollback model does that on its own. It is not throwaway work; a queue's
+  replay model needs the same "last known server state" notion.
+
+  Rejected for now: the variant of a queue that applies the optimistic update only
+  when the write starts, so just one is ever outstanding and whole-state snapshots
+  become safe again. It makes a second edit invisible until the first write
+  returns, which throws away the instant feel that justifies optimistic UI at all.
 
   The concrete shape, so nobody has to re-derive it: all domain data is a single
   `useState` (`AppState` = 1 scalar + 6 arrays) mirrored by a synchronous
