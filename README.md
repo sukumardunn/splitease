@@ -56,28 +56,18 @@ npm install
 Apply **every** file in the repo-root `supabase/migrations/` directory, in
 filename order — they are append-only, and later ones build on earlier ones.
 `20260719000001_phase4a_auth_persistence.sql` creates the ten core tables, RLS
-policies and the `handle_new_user` trigger; the three after it add the
-append-only activity log, `import_batches`, and the atomic expense-write
-function.
+policies and the `handle_new_user` trigger; the ones after it add the append-only
+activity log, `import_batches`, the atomic expense/group write functions, receipt
+storage and the stored split mode.
 
 - **Hosted:** paste each one into the Supabase dashboard SQL editor, in order.
-- **Local CLI:** run `supabase start && supabase db reset` **from the repo
-  root**, not from `jsapps/`.
+- **Local CLI:** run `supabase start && supabase db reset` from anywhere in the
+  repo — `supabase/config.toml` at the root pins the migrations directory.
 
-> **⚠️ There is a second, dead migrations directory at `jsapps/supabase/migrations/`**
-> — two Bolt-era files (`*_proud_mud.sql`, `*_round_mouse.sql`) describing an
-> abandoned multi-account schema that conflicts with the real one and that no
-> code references. There is no `config.toml` anywhere, so the Supabase CLI picks
-> its migrations path from the current working directory: run `db reset` from
-> `jsapps/` and you will apply the **wrong schema**. One of them also has a
-> self-referential `group_members` policy that raises
-> `infinite recursion detected in policy`. See [`docs/RLS_AUDIT.md`](docs/RLS_AUDIT.md);
-> deleting that directory is proposed but not yet done, since it is inherited
-> from the frozen upstream commit.
-
-Also disable email confirmations for local dev so sign-up logs you straight in
-(dashboard: *Auth → Providers → Email → Confirm email* off; or local
-`supabase/config.toml`: `[auth.email] enable_confirmations = false`).
+Email confirmations are already off for local dev in `supabase/config.toml`
+(`[auth.email] enable_confirmations = false`), so sign-up logs you straight in.
+On a hosted project set the equivalent switch by hand: *Auth → Providers → Email
+→ Confirm email* off.
 
 ### 4. Create `jsapps/.env.local`
 

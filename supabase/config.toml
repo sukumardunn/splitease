@@ -1,0 +1,55 @@
+# Supabase CLI config for SplitEase.
+#
+# Why this file exists at all: the CLI picks its migrations directory by walking
+# up from the current working directory looking for `supabase/config.toml`. With
+# no config anywhere, running `supabase db reset` from `jsapps/` used to pick up
+# `jsapps/supabase/migrations/` — a dead Bolt-era schema that conflicted with the
+# real one. That directory was deleted on 2026-07-25; this file makes the repo
+# root the only answer, so the trap cannot come back if someone recreates a
+# `supabase/` folder further down the tree.
+#
+# `project_id` is local-only — it namespaces the local Docker containers and is
+# NOT the hosted project ref (which lives in the gitignored `jsapps/.env.local`,
+# and is deliberately kept out of git).
+project_id = "splitease"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+# Cap rows returned by a single PostgREST request.
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# Must match the hosted project, which reports server_version 17.6. A mismatch
+# here is how local dev silently diverges from production.
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+# Local mail catcher — sign-up mails are viewable at http://localhost:54324
+# instead of being delivered.
+[inbucket]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# Off for local dev so sign-up logs you straight in. The hosted project has the
+# equivalent switch under Auth -> Providers -> Email -> Confirm email.
+enable_confirmations = false
+double_confirm_changes = true

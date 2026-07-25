@@ -26,15 +26,17 @@ Two things are worth the reader's time anyway:
 1. **The specific hole this audit was told to look for does not exist here, and
    could not have** — see [the `with check` question](#the-with-check-question).
    That premise is worth correcting so nobody re-audits on it.
-2. **The real risk is not a policy, it is a file.**
-   `jsapps/supabase/migrations/` still holds the Bolt-era schema from upstream
-   `a8266c6`. It is a *different, conflicting* `public` schema, its policies are
-   materially weaker than the live ones, and the README's own local-setup command
-   applies it if you run it from the directory the README tells you to `cd` into.
-   Finding 1.
+2. ~~**The real risk is not a policy, it is a file.**~~ **Fixed on 2026-07-25** —
+   `jsapps/supabase/migrations/` held the Bolt-era schema from upstream
+   `a8266c6`: a *different, conflicting* `public` schema whose policies were
+   materially weaker than the live ones, which the README's own local-setup
+   command would apply if run from the directory the README told you to `cd` into.
+   The directory is deleted and `supabase/config.toml` now pins the migrations
+   path at the repo root, so cwd no longer decides. Finding 1, and it was the only
+   finding above low severity.
 
-Findings: **0 exploitable now**, **1 repo hazard (medium)**, **4 defence in
-depth (low)**, **3 informational**.
+Findings: **0 exploitable now**, ~~1 repo hazard (medium)~~ **fixed**, **4 defence
+in depth (low)**, **3 informational**.
 
 ---
 
@@ -113,7 +115,15 @@ on a child row's continued existence as evidence of anything.
 
 ## Findings, ranked
 
-### 1. Repo hazard (medium) — a second, weaker schema is still on disk and the README will apply it
+### 1. ~~Repo hazard (medium)~~ — FIXED 2026-07-25: a second, weaker schema was on disk and the README would apply it
+
+> **Resolved.** `git rm -r jsapps/supabase` was run and `supabase/config.toml`
+> added at the repo root (`major_version = 17`, matching the hosted project's
+> reported `server_version 17.6`). The CLI walks up from cwd looking for
+> `supabase/config.toml`, so the root is now the only answer and running
+> `supabase db reset` from `jsapps/` can no longer apply the wrong schema. The
+> README's local-setup step and its warning block were rewritten to match. The
+> finding is kept below as the record of what was removed and why.
 
 `jsapps/supabase/migrations/20250522164059_round_mouse.sql` (from upstream
 `a8266c6`; its sibling `20250521173343_proud_mud.sql` is empty) defines an
@@ -147,16 +157,16 @@ exist: `create table public.groups` in 4a would have failed outright if they did
 and 4b is recorded as applied and verified against the hosted project
 (`docs/PHASE4B_BACKLOG.md` item 6).
 
-**Fix — delete it, and pin the path so cwd stops mattering:**
+**Fix — delete it, and pin the path so cwd stops mattering.** All three parts are
+now done:
 
 ```bash
 git rm -r jsapps/supabase   # 20250521173343_proud_mud.sql is empty; the other is dead
 ```
 
-Then add `supabase/config.toml` at the repo root so `supabase db reset` /
-`db push` resolve to `supabase/migrations/` regardless of cwd, and correct README
-§3, which still says "9 tables" and names only the 4a file — 5a added the tenth
-(`import_batches`) and two columns.
+`supabase/config.toml` exists at the repo root, so `supabase db reset` / `db push`
+resolve to `supabase/migrations/` regardless of cwd, and README §3 no longer
+undercounts the tables or names only the 4a file.
 
 ### 2. Defence in depth (low) — person-ref columns have no FK, so identity is unconstrained
 

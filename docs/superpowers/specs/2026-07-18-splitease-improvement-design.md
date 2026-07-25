@@ -13,7 +13,7 @@ Splitwise alternative that:
 
 - Persists data securely with reversible deletes (soft-delete + undo).
 - Keeps a real, append-only **activity/audit log**.
-- Imports existing Splitwise history (CSV first; screenshot OCR as a bonus).
+- Imports existing Splitwise history from a CSV export.
 - Supports the full range of Splitwise split types plus notes and image
   attachments.
 - Provides category- and person-level spend analytics.
@@ -33,7 +33,7 @@ any hosting work; later phases move to **Supabase free tier**.
 |---|---|---|
 | Backend / hosting | **Supabase free tier** (Postgres + Auth + Storage + RLS) | Already scaffolded; no server to run; encryption at rest + TLS included. |
 | Frontend hosting | **Vercel or Netlify free tier** (static Vite build) | Zero-cost, git-push deploy. |
-| Import | **Splitwise CSV export first**; screenshot OCR later (bonus) | CSV = near-perfect accuracy, zero AI cost. OCR is additive. |
+| Import | **Splitwise CSV export only** | CSV = near-perfect accuracy, zero AI cost. Screenshot/OCR import was **dropped on 2026-07-25** by user decision — they will always enter expenses by hand rather than scan receipts, so an OCR dependency buys nothing. |
 | Rollback | **Soft-delete + undo** (no heavy per-field versioning) | Meets "rolled back" without over-engineering. |
 | Audit log | **Append-only `activity_events` table** | "Must" requirement; also powers the real Activity feed. |
 | Security | **Supabase platform (RLS + encryption at rest + TLS)**; anon key only in client | No custom crypto; correct RLS is the security surface. |
@@ -90,8 +90,12 @@ Extends the existing migration. New/changed items in **bold**.
 - `groups(id, name, avatar_url, created_at, created_by, **deleted_at**)`.
 - `group_members(group_id, user_id, joined_at)`.
 - `expenses(id, description, amount, paid_by, group_id, category, currency,
-  created_at, **created_by, updated_at, deleted_at, split_type, notes,
-  receipt_url, import_batch_id**)`.
+  created_at, **created_by, updated_at, deleted_at, split_mode, notes,
+  import_batch_id**)`.
+- **`expense_receipts(expense_id, owner_id, mime_type, byte_size, data_base64,
+  created_at)`** — receipt bytes live in their own table, not as a `receipt_url`
+  on `expenses`, because `expenses` is fetched in full on every app load and
+  image bytes would ride along. See §5.3 for why Storage was rejected.
 - `expense_splits(expense_id, user_id, amount, **share_weight, percentage**)` —
   store the *intent* (weight/percent) not just the resolved amount, so splits
   can be re-derived and edited.
@@ -139,17 +143,24 @@ optional **debt simplification** within a group.
 
 ### 5.2 Import
 
-- **Phase A — CSV:** upload Splitwise CSV export → column mapping → **dry-run
-  preview** (what will be created, duplicates flagged) → confirm → creates an
+- **CSV:** upload Splitwise CSV export → column mapping → **dry-run preview**
+  (what will be created, duplicates flagged) → confirm → creates an
   `import_batch` so it can be undone wholesale.
-- **Phase B — Screenshot (bonus):** image → vision/OCR → structured rows → same
-  preview/confirm/undo pipeline. Reuses Phase A's preview UI.
+
+CSV is the only import path. A screenshot/OCR variant was specified here as a
+bonus phase and **dropped on 2026-07-25** — see the decisions table above. Don't
+resurrect it without asking.
 
 ### 5.3 Attachments & notes
 
 - **Notes:** free-text `notes` on expenses (already in schema above).
-- **Attachments:** upload receipt images to **Supabase Storage**; store
-  `receipt_url`; thumbnail in expense detail. Local phase stores a data-URL/blob.
+- **Attachments:** receipt images are stored **in Postgres**, not in Supabase
+  Storage — user decision, 2026-07-25: "Storage bucket feels like adding more
+  variables for a small app… For now, try to store in app/DB itself." A bucket
+  brings its own RLS surface and egress bill for what is a personal-scale app.
+  The bytes live in a dedicated child table (not a column on `expenses`, which is
+  fetched whole on every app load), downscaled client-side with `<canvas>` and
+  capped by a server-side `CHECK`. Revisit only if the app actually scales.
 
 ### 5.4 Analytics
 
@@ -198,14 +209,13 @@ Each phase is independently shippable and ends in a working app. Phases 1–3 ne
 - **Exit:** two users on different devices share groups; data is server-persisted
   and secured by RLS. **No expense cap.**
 
-### Phase 5 — Import (CSV → screenshot)
-- CSV import with mapping, dry-run preview, dedupe, batch-undo (§5.2 A).
-- Screenshot OCR as bonus on the same pipeline (§5.2 B).
+### Phase 5 — Import (CSV)
+- CSV import with mapping, dry-run preview, dedupe, batch-undo (§5.2).
 - **Exit:** a user can reach a useful starting point by importing existing
   Splitwise history.
 
 ### Phase 6 — Attachments, notes & analytics
-- Notes + Supabase Storage receipt attachments (§5.3).
+- Notes + receipt attachments stored in Postgres (§5.3).
 - Category-trend and person-wise analytics dashboards (§5.4).
 - **Exit:** expenses carry context; users see spend trends.
 
@@ -237,10 +247,10 @@ are serialized** — only one agent may hold `supabase/migrations/**` at a time.
 - **Local → cloud migration (Phase 4)** is the trickiest step (ID remapping,
   conflict handling). Mitigate with an explicit one-time migration tool + dry run.
 - **CSV format drift:** Splitwise export columns may vary; mapping UI absorbs this.
-- **Supabase free-tier limits:** storage/egress caps on attachments; document them
-  and keep image sizes small.
+- **Supabase free-tier limits:** attachments now consume the 500 MB *database*
+  quota rather than Storage (§5.3), so the client-side downscale and the
+  server-side size `CHECK` are the load-bearing controls. Keep image sizes small.
 - **Multi-payer + debt simplification** interact; validate math with tests.
-- **OCR accuracy** (bonus) — always route through the confirm/preview + undo path.
 
 ---
 

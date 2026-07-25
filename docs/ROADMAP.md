@@ -37,36 +37,49 @@ hosted DB on a fresh signup — see the notes below each phase.
 
 ## Remaining — in priority order
 
-### P1 — Phase 5B: Screenshot import (bonus)
+### ~~Phase 5B: Screenshot import~~ — CANCELLED 2026-07-25
 
-Spec: [`design §5.2`](superpowers/specs/2026-07-18-splitease-improvement-design.md).
-**5A (CSV) is done** — see the table above. 5B is image → OCR → structured rows,
-reusing 5A's preview/confirm/undo pipeline unchanged.
+**Dropped by user decision. Do not build it, and do not re-propose it.** The
+user's words: *"I'd say remove the OCR feature completely! I'll always add
+manually instead of scanning receipts."* An OCR engine (`tesseract.js` is
+~2–10 MB of WASM) would have been runtime dependency #6 against a deliberate
+5-dep budget, and it needed a row-repair step ahead of `buildImportPlan` on top.
+Removed from [`design §5.2`](superpowers/specs/2026-07-18-splitease-improvement-design.md)
+as well; that section now records the cancellation rather than the plan.
 
-The seam is already in place: `import_batches.source` defaults to `'csv'` but is
-a free text column, and `AppContext.importCsv` takes a `source` override. An OCR
-front-end only has to produce `string[][]` rows and hand them to
-`buildImportPlan` — no migration, no store changes.
+CSV import (5A, shipped) is the only import path.
 
-**Worth knowing before starting 5B:** OCR output is far less trustworthy than a
-CSV, and `buildImportPlan` currently *rejects* rows whose person columns don't
-sum to zero rather than trying to repair them. That is right for a CSV (a
-mismatch means we misread the format) but will likely reject a lot of otherwise
-good OCR rows, so 5B probably wants a repair/nudge step ahead of the planner
-rather than a change to the planner itself.
+**What stayed behind on purpose:** `import_batches.source` is still a free-text
+column defaulting to `'csv'`. It is applied to the hosted DB and it honestly
+records provenance, so it was not worth a migration to drop — but it no longer
+means "screenshot support is coming".
 
-### P2 — Phase 6B: Receipt attachments
+### P1 — Phase 6B: Receipt attachments (in progress)
 
 **6A (notes + analytics) is done** — see the table above. What's left of Phase 6
-is attachments only:
+is attachments only.
 
-- Receipt attachments via Supabase Storage (`receipt_url`); mind free-tier egress.
-- **This one does need a migration and infra**, which is why it was split out:
-  `receipt_url` does not exist on `expenses` yet (only `notes` did), and a Storage
-  bucket plus its own RLS policies have to be created. Claim
-  `supabase/migrations/**` alone for it.
+**Storage bucket rejected; receipts go in Postgres.** User decision, 2026-07-25:
+*"Storage bucket feels like adding more variables for a small app - we can add
+this later if it scales. For now, try to store in app/DB itself."* So:
 
-**Worth knowing before starting 6B:** analytics deliberately reports the
+- Bytes live in a dedicated **`expense_receipts` child table**, not as a
+  `receipt_url` (or a blob column) on `expenses`. This is the load-bearing part:
+  the app fetches every expense on startup, so image bytes on the `expenses` row
+  would be dragged into every page load. The receipt is fetched lazily, only when
+  someone opens it.
+- **base64 `text`, not `bytea`** — PostgREST serialises `bytea` as `\x` hex (2x
+  over the wire plus a client-side decode); base64 is 1.33x and drops straight
+  into an `<img src="data:…">`.
+- **Downscaled client-side with the built-in `<canvas>` API** — no image
+  dependency, the 5-dep budget stays intact — and capped by a server-side
+  `CHECK` so a client bug cannot fill the 500 MB free-tier database.
+- Attachments now consume the **database** quota, not the Storage/egress quota.
+  That is the tradeoff the user accepted; revisit only if the app actually scales.
+- Bundled with the stored split mode (below) into one `expenses` migration, since
+  both alter the same table.
+
+**Worth knowing before touching this:** analytics deliberately reports the
 *current user's share* of each expense rather than its face value — see the
 header comment in `services/analytics.ts`. If you add figures anywhere, match
 that convention or say plainly which one you're using; a total that silently
@@ -75,15 +88,16 @@ means the other thing is the easiest way to make this page lie.
 Both follow-ups 6A left open are now **done** — see the edit-expense row in the
 table above. What that work leaves behind, for whoever touches expenses next:
 
-- **Split mode is inferred, not stored.** An expense records its resolved
-  per-person amounts, never the mode that produced them. `inferSplitMode` in
-  `AddExpenseModal.tsx` claims `equal` only when the stored splits match
-  `resolveSplit`'s equal output cent-for-cent, and otherwise seeds `exact`,
-  which round-trips any split losslessly. So a percentage/shares expense reopens
-  as `exact` with the right numbers, but the reader can no longer tell it was
-  *entered* as 60/40. Storing the mode would need a migration; it was not worth
-  one on its own, but it is the natural thing to add whenever `expenses` is
-  altered next (e.g. 6B's `receipt_url`).
+- **Split mode is now being stored** (user decision 2026-07-25: *"Yes store
+  it"*), bundled into 6B's migration since both alter `expenses`. Until then, and
+  for every row created before it, the mode is *inferred*: an expense records only
+  its resolved per-person amounts, so `inferSplitMode` in `AddExpenseModal.tsx`
+  claims `equal` only when the stored splits match `resolveSplit`'s equal output
+  cent-for-cent and otherwise seeds `exact`, which round-trips any split
+  losslessly. A percentage/shares expense therefore reopens as `exact` with the
+  right numbers but no record that it was *entered* as 60/40. **`inferSplitMode`
+  stays as the fallback after the migration** — pre-migration rows and 5A CSV
+  imports have no recorded intent.
 - **Editing an expense the current user has no share in adds them at $0.** The
   form hardcodes the current user into the split list, so such an expense (a
   Phase 5A import can produce one) comes back with a $0 split row for them.
@@ -107,9 +121,9 @@ Per the Postgres `CREATE POLICY` docs, on `ALL` and `UPDATE` a policy with no
 `for all` policy cannot permit `update … set owner_id = <someone else>`. 4a
 spells out `with check` on all seven mutable tables anyway.
 
-What the audit *did* surface is one repo hazard (the dead
-`jsapps/supabase/migrations/` schema — see the decision list below), four
-low-severity defence-in-depth items, and three informational notes, each with SQL.
+The one repo hazard the audit surfaced — the dead `jsapps/supabase/migrations/`
+schema — is **fixed** (see the decision list below). What remains is four
+low-severity defence-in-depth items and three informational notes, each with SQL.
 It is also explicit about what it could not check without database access: whether
 the deployed schema still matches the files on disk, and whether any policy was
 hand-edited in the dashboard (which leaves no trace in git). Both would void the
@@ -117,24 +131,34 @@ verdict; the doc names the queries that settle them.
 
 ### P4 — Deferred / needs a decision, not code
 
-- **Delete `jsapps/supabase/`?** It holds two Bolt-era migrations describing an
-  abandoned multi-account schema that conflicts with the real one, that nothing in
-  `jsapps/src` references, and one of whose policies would raise
-  `infinite recursion detected in policy`. With no `config.toml` anywhere, the
-  Supabase CLI picks its migrations directory from the current working directory,
-  so `supabase db reset` run from `jsapps/` applies the **wrong schema**. The
-  README now warns about this, which defuses the trap but does not remove it.
-  Deleting the directory (plus adding a root `config.toml`) is the real fix —
-  left as a decision only because the files are inherited from the frozen upstream
-  commit `a8266c6` rather than written here.
-- **`importState` is the last non-atomic multi-table write.** It writes friends →
-  groups → members → expenses → payers → splits as six-plus separate requests with
-  no cleanup path, so a mid-way failure leaves a partially imported account.
-  (`importCsvBatch` has the same shape but mitigates it with batch-tagged
-  best-effort cleanup.) It is only reachable from the one-time localStorage→cloud
-  import, which most accounts will never run — hence not swept up with the other
-  three. Fixing it well probably means one function taking the whole payload, which
-  is a bigger piece of SQL than the two added here.
+- ~~**Delete `jsapps/supabase/`?**~~ **Done 2026-07-25** on the user's
+  instruction ("delete it and proceed with your recommendations"). The two
+  Bolt-era migrations described an abandoned multi-account schema that conflicted
+  with the real one, that nothing in `jsapps/src` referenced, and one of whose
+  `group_members` policies queried its own table and so would raise
+  `infinite recursion detected in policy`. `git rm -r jsapps/supabase` plus a new
+  root **`supabase/config.toml`** (`major_version = 17`, matching the hosted
+  project's reported `server_version 17.6`). The CLI walks up from cwd looking for
+  `supabase/config.toml`, so the repo root is now the only answer and
+  `supabase db reset` from `jsapps/` can no longer apply the wrong schema. README
+  §3 and [`RLS_AUDIT.md`](RLS_AUDIT.md) finding 1 both updated.
+- **`importState` — being made atomic now** (user decision 2026-07-25: *"make it
+  atomic as well. i dont want any midway failures to leave me hunting for
+  expenses"*). It writes friends → groups → members → expenses → payers → splits →
+  settlements → events as **eight sequential REST inserts, each its own
+  transaction**, with no `try/catch` and no cleanup, so there are seven half-applied
+  stopping points. Note a compensating-cleanup fix of the `importCsvBatch` kind is
+  *structurally impossible* here: `activity_events` has only SELECT and INSERT
+  policies as of `20260724000001` (append-only by design), so the client cannot
+  delete step 8. One `security invoker` function taking the whole payload is the
+  only path that covers it.
+  **Related bug, found while mapping this:** on failure `handleImport` leaves
+  `IMPORT_HANDLED_KEY` unset and `importCandidate` non-null, so the prompt stays
+  open and Import can be pressed again — and because `remapLocalState` runs inside
+  the promise chain and mints fresh uuids per attempt, a retry after a partial
+  failure inserts a **second copy** of everything that already landed. The toast's
+  "your local data is untouched" is true of localStorage but not of the cloud.
+  Atomicity should make the retry safe by construction.
 - **`insertExpense`/`insertGroup` are now upserts, not inserts.** A repeat of the
   *same* client-generated id updates instead of raising `23505`, which makes a
   retry idempotent — a net gain, and a collision with another owner's id still
@@ -162,18 +186,42 @@ verdict; the doc names the queries that settle them.
   silently done nothing for half the modals. That also fixed a latent bug: those
   two never took *initial* focus either, invisible because their tests only ever
   render them already open.
-- **Whole-state rollback granularity** (4b item 5): a failed write restores the
-  entire state snapshot, discarding any concurrent in-flight optimistic update.
-  A spec'd 4a tradeoff, commented in `AppContext.tsx`. Fixing it means choosing a
-  concurrency model (per-entity snapshots, or a mutation queue) — a design call,
-  so it was deliberately left open rather than patched.
-- **React Router v7 future-flag warnings** on every app load, from
-  `BrowserRouter` in `App.tsx`. Opting in changes runtime behaviour
-  (`v7_startTransition`), so it is not a drive-by. The test-side `MemoryRouter`
-  already opts in.
+- **Whole-state rollback granularity** (4b item 5) — **still open, awaiting the
+  user's choice of concurrency model.** A failed write restores the entire state
+  snapshot, discarding any concurrent in-flight optimistic update. A spec'd 4a
+  tradeoff, commented in `AppContext.tsx:163-172`.
+
+  The concrete shape, so nobody has to re-derive it: all domain data is a single
+  `useState` (`AppState` = 1 scalar + 6 arrays) mirrored by a synchronous
+  `stateRef`, and **12 `mutate()` call sites** are fire-and-forget with nothing
+  serialising them. `mutate` captures `prev = stateRef.current` — the whole world —
+  applies the optimistic update, and on rejection calls `applyState(prev)`. Two
+  real failure modes follow: (i) a later successful write is silently reverted on
+  screen while its DB row and activity event persist, and (ii) because each
+  rollback restores a *different* point in history, the **last** rollback wins and
+  can *resurrect* an earlier write that already failed and was undone. There is no
+  refetch after a rollback, so the divergence lasts until remount. The single-slot
+  toast compounds it: two near-simultaneous failures show one message, so the user
+  cannot tell which change was lost.
+
+  Because all domain data sits behind one `setState`, per-entity rollback needs no
+  state-splitting work — only a narrower updater in the `catch`. Note neither
+  option fixes last-write-wins on the *same* entity.
+- **React Router v7 future-flag warnings** — **accepted, not fixing** (user
+  decision 2026-07-25: *"the console warnings are fine for now"*, unless they cause
+  a usability issue). They do not: on `react-router-dom` 6.30.0 the warnings are
+  console-only, and `App.tsx` declares **no splat (`*`) routes at all**, so
+  `v7_relativeSplatPath` cannot change any resolved path in this app.
+  `v7_startTransition` only changes *how* router state updates are scheduled, not
+  what renders. The test-side `MemoryRouter` already opts in, which is why tests
+  are quiet. Revisit on the actual v7 upgrade.
 - **`SUPABASE_SECRET_KEY` was printed in cleartext** in an agent transcript on
-  2026-07-24 (a redaction regex in a status command failed to match). It should be
-  rotated in Project Settings → API if that has not already happened.
+  2026-07-24 (a redaction regex in a status command failed to match). **Rotation
+  deliberately deferred** by the user on 2026-07-25 until the app is
+  feature-complete — *"I'll rotate it after we've built the entire app… but remind
+  me when we move the app to version 1.0."* So: **do not treat this as an open
+  finding, and do raise it unprompted at v1.0 / first public hosting.** Rotate in
+  Project Settings → API, then update `jsapps/.env.local`.
 - ~~**Four leftover test accounts in the hosted project.**~~ **Done** —
   `accepta_178491703417526@`, `acceptb_178491703417526@`, `smoke_1784917666@` and
   `smoke6a_1784952000@` were deleted on 2026-07-25 on the user's explicit
