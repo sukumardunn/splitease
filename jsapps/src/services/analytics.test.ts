@@ -5,6 +5,7 @@ import {
   periodStart,
   filterByPeriod,
   totalsByCategory,
+  percentageShares,
   totalsByMonth,
   summarizeSpend,
   categoryLabel,
@@ -154,6 +155,95 @@ describe('totalsByCategory', () => {
       ME
     );
     expect(slices).toEqual([]);
+  });
+});
+
+describe('percentageShares', () => {
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+  it('sums to 100 where independent rounding would round every share down to 99', () => {
+    // 33.33% three times: rounding each in isolation prints 33/33/33 = 99.
+    expect(percentageShares([10, 10, 10], 30)).toEqual([34, 33, 33]);
+    expect(sum(percentageShares([10, 10, 10], 30))).toBe(100);
+  });
+
+  it('sums to 100 where independent rounding would round every share up to 102', () => {
+    // 16.66% six times: rounding each in isolation prints 17 six times = 102.
+    const shares = percentageShares([1, 1, 1, 1, 1, 1], 6);
+    expect(shares).toEqual([17, 17, 17, 17, 16, 16]);
+    expect(sum(shares)).toBe(100);
+  });
+
+  it('gives a single category the whole 100%', () => {
+    expect(percentageShares([42.5], 42.5)).toEqual([100]);
+  });
+
+  it('leaves already-whole percentages alone, including exact halves', () => {
+    expect(percentageShares([50, 50], 100)).toEqual([50, 50]);
+    expect(percentageShares([25, 25, 25, 25], 100)).toEqual([25, 25, 25, 25]);
+    expect(percentageShares([90, 10], 100)).toEqual([90, 10]);
+  });
+
+  it('returns zeroes rather than NaN when there is no spend', () => {
+    expect(percentageShares([0, 0], 0)).toEqual([0, 0]);
+    expect(percentageShares([], 0)).toEqual([]);
+    // A negative or missing denominator must not produce -Infinity% either.
+    expect(percentageShares([5], -1)).toEqual([0]);
+    expect(percentageShares([5], NaN)).toEqual([0]);
+  });
+
+  it('breaks equal remainders by input order, so the display cannot flicker', () => {
+    // Two identical remainders, one point to hand out: it goes to the earlier
+    // index every time. Same input => same output, run to run.
+    const values = [1, 1, 1];
+    const first = percentageShares(values, 3);
+    expect(first).toEqual([34, 33, 33]);
+    for (let i = 0; i < 5; i++) {
+      expect(percentageShares(values, 3)).toEqual(first);
+    }
+  });
+
+  it('is a pure function of order, so re-ranked input re-ranks the percentages', () => {
+    // Same multiset, different order: the extra point follows the tie-break to
+    // whichever equal-remainder row comes first, and nothing else moves.
+    expect(percentageShares([7, 1, 1], 9)).toEqual([78, 11, 11]);
+    expect(percentageShares([1, 7, 1], 9)).toEqual([11, 78, 11]);
+  });
+
+  it('hands leftover points to the largest fractional parts first', () => {
+    // Exact: 47.5 / 47.5 / 5. Floors 47/47/5 = 99, one point to hand out, and
+    // the two .5 remainders tie => earlier index wins.
+    expect(percentageShares([95, 95, 10], 200)).toEqual([48, 47, 5]);
+    // Exact: 66.6 / 33.3. Floors 66/33 = 99; .6 beats .3.
+    expect(percentageShares([200, 100], 300)).toEqual([67, 33]);
+  });
+
+  it('does not inflate a subset to 100%', () => {
+    // Callers that pass only part of the spend get the honest figure: the
+    // apportionment target is the rounded exact sum, not always 100.
+    expect(percentageShares([25, 25], 100)).toEqual([25, 25]);
+    expect(sum(percentageShares([10, 10, 10], 100))).toBe(30);
+  });
+
+  it('sums to 100 end to end, over the figures totalsByCategory really produces', () => {
+    // Awkward cents on purpose: this is the shape that produced 101% before.
+    const expenses = [
+      expense({ category: 'rent', splitWith: [{ userId: ME, amount: 899.99 }] }),
+      expense({ category: 'dining', splitWith: [{ userId: ME, amount: 137.41 }] }),
+      expense({ category: 'travel', splitWith: [{ userId: ME, amount: 61.33 }] }),
+      expense({ category: 'groceries', splitWith: [{ userId: ME, amount: 212.07 }] }),
+      expense({ category: 'utilities', splitWith: [{ userId: ME, amount: 7.5 }] }),
+    ];
+    const slices = totalsByCategory(expenses, ME);
+    // The page passes summarizeSpend().total as the denominator.
+    const { total } = summarizeSpend(expenses, ME);
+    const shares = percentageShares(
+      slices.map((s) => s.total),
+      total
+    );
+    expect(sum(shares)).toBe(100);
+    // The dollar figures are untouched by the apportionment.
+    expect(slices.map((s) => s.total)).toEqual([899.99, 212.07, 137.41, 61.33, 7.5]);
   });
 });
 

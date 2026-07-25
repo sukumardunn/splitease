@@ -11,6 +11,7 @@ import {
   Payer,
 } from '../../services/splitEngine';
 import { CATEGORY_LABELS, EXPENSE_CATEGORIES } from '../../services/analytics';
+import { deriveFormSeed, resolvePaidBy } from './expenseFormSeed';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
@@ -29,90 +30,6 @@ const SPLIT_MODES: { value: SplitMode; label: string; icon: React.ElementType }[
   { value: 'shares', label: 'Shares', icon: Hash },
   { value: 'adjustment', label: 'Adjustment (+/-)', icon: SlidersHorizontal },
 ];
-
-/**
- * An expense stores its *resolved* per-person amounts, never the mode that
- * produced them, so opening one for edit has to infer a mode. Only `equal` is
- * worth recovering — it keeps the split rebalancing if the amount is changed —
- * and it is claimed only when the stored splits match `resolveSplit`'s equal
- * output cent-for-cent. Everything else seeds `exact`, which round-trips any
- * split losslessly no matter what produced it (percentage, shares, import).
- */
-function inferSplitMode(expense: Expense, participants: string[]): SplitMode {
-  const stored = new Map(expense.splitWith.map((s) => [s.userId, s.amount]));
-  if (stored.size !== participants.length) return 'exact';
-  const equal = resolveSplit({
-    totalAmount: expense.amount,
-    participants,
-    mode: 'equal',
-    values: {},
-  });
-  return equal.every((s) => stored.get(s.userId) === s.amount) ? 'equal' : 'exact';
-}
-
-interface FormSeed {
-  description: string;
-  amount: string;
-  category: ExpenseCategory;
-  groupId: string | null;
-  notes: string;
-  payerIds: string[];
-  payerValues: Record<string, string>;
-  splitMode: SplitMode;
-  selectedFriends: string[];
-  splitValues: Record<string, string>;
-}
-
-/**
- * Initial form state — blank for a new expense, or unpacked from an existing
- * one for an edit. Exported so the unpacking can be tested without a DOM.
- */
-export function deriveFormSeed(currentUserId: string, expense?: Expense): FormSeed {
-  if (!expense) {
-    return {
-      description: '',
-      amount: '',
-      category: 'other',
-      groupId: null,
-      notes: '',
-      payerIds: [currentUserId],
-      payerValues: {},
-      splitMode: 'equal',
-      selectedFriends: [],
-      splitValues: {},
-    };
-  }
-
-  // The form always puts the current user first and hardcodes them into the
-  // split list, so participants are rebuilt in that order regardless of how the
-  // stored splits happen to be sorted.
-  const selectedFriends = expense.splitWith
-    .map((s) => s.userId)
-    .filter((id) => id !== currentUserId);
-  const splitMode = inferSplitMode(expense, [currentUserId, ...selectedFriends]);
-
-  const splitValues: Record<string, string> = {};
-  if (splitMode === 'exact') {
-    for (const s of expense.splitWith) splitValues[s.userId] = String(s.amount);
-  }
-  const payerValues: Record<string, string> = {};
-  for (const p of expense.payers ?? []) payerValues[p.userId] = String(p.amount);
-
-  return {
-    description: expense.description,
-    amount: String(expense.amount),
-    category: expense.category,
-    groupId: expense.groupId ?? null,
-    notes: expense.notes ?? '',
-    payerIds: expense.payers?.length
-      ? expense.payers.map((p) => p.userId)
-      : [expense.paidBy],
-    payerValues,
-    splitMode,
-    selectedFriends,
-    splitValues,
-  };
-}
 
 const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose, expense }) => {
   if (!isOpen) return null;
@@ -231,15 +148,25 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
     if (isNaN(totalAmount) || totalAmount <= 0) return;
     if (!isSplitValid || !isPayersValid) return;
 
-    const paidBy = payerIds[0];
-    const payers = payerIds.length > 1 ? payersList : undefined;
+    const paidBy = resolvePaidBy(payerIds, expense?.paidBy);
+
+    let payers: Payer[] | undefined;
+    if (payerIds.length > 1) {
+      payers = payersList;
+    } else if (expense?.payers?.length === 1) {
+      // The expense already recorded exactly one payer — a Phase 5A import
+      // always does — so keep that row instead of deleting it. Sending
+      // `payersList` here would write $0, because the per-payer inputs are only
+      // shown (and only filled) when there are several payers.
+      payers = [{ userId: paidBy, amount: totalAmount }];
+    }
+    // Otherwise `undefined`: the key is still present, so dropping from several
+    // payers back to one clears the rows the expense used to have.
 
     const fields = {
       description,
       amount: totalAmount,
       paidBy,
-      // `undefined` rather than omitted, so dropping back to a single payer
-      // clears any payers the expense used to have.
       payers,
       splitWith: splits,
       category,
@@ -257,21 +184,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
       addExpense({ ...fields, currency: 'USD' });
     }
 
+    // No form reset: closing unmounts this component (the wrapper renders null),
+    // so the next open starts from a fresh `deriveFormSeed`.
     onClose();
-    if (!expense) resetForm();
-  };
-
-  const resetForm = () => {
-    setDescription('');
-    setAmount('');
-    setCategory('other');
-    setSelectedGroup(null);
-    setPayerIds([currentUser.id]);
-    setPayerValues({});
-    setSplitMode('equal');
-    setSelectedFriends([]);
-    setSplitValues({});
-    setNotes('');
   };
 
   const splitUnitLabel = (mode: SplitMode): string => {
@@ -450,9 +365,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
 
                       {checked && payerIds.length > 1 && (
                         <div className="flex items-center">
-                          <span className="mr-2">$</span>
+                          <span className="mr-2" aria-hidden="true">$</span>
                           <input
                             type="number"
+                            id={`payer-amount-${person.id}`}
+                            aria-label={`Amount paid by ${person.name}`}
                             value={payerValues[person.id] || ''}
                             onChange={(e) =>
                               setPayerValues({ ...payerValues, [person.id]: e.target.value })
@@ -521,9 +438,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
                     </div>
                     {splitMode !== 'equal' && (
                       <div className="flex items-center">
-                        <span className="mr-2">{splitUnitLabel(splitMode)}</span>
+                        <span className="mr-2" aria-hidden="true">{splitUnitLabel(splitMode)}</span>
                         <input
                           type="number"
+                          id={`split-amount-${currentUser.id}`}
+                          aria-label={`Your share (${splitUnitLabel(splitMode)})`}
                           value={splitValues[currentUser.id] || ''}
                           onChange={(e) =>
                             setSplitValues({ ...splitValues, [currentUser.id]: e.target.value })
@@ -567,9 +486,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
 
                       {selectedFriends.includes(friend.id) && splitMode !== 'equal' && (
                         <div className="flex items-center">
-                          <span className="mr-2">{splitUnitLabel(splitMode)}</span>
+                          <span className="mr-2" aria-hidden="true">{splitUnitLabel(splitMode)}</span>
                           <input
                             type="number"
+                            id={`split-amount-${friend.id}`}
+                            aria-label={`${friend.name}'s share (${splitUnitLabel(splitMode)})`}
                             value={splitValues[friend.id] || ''}
                             onChange={(e) => {
                               setSplitValues({
