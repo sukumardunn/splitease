@@ -53,11 +53,27 @@ npm install
 
 ### 3. Apply the database schema
 
-Run `supabase/migrations/20260719000001_phase4a_auth_persistence.sql` against your
-project. It creates 9 tables, RLS policies, and the `handle_new_user` trigger.
+Apply **every** file in the repo-root `supabase/migrations/` directory, in
+filename order — they are append-only, and later ones build on earlier ones.
+`20260719000001_phase4a_auth_persistence.sql` creates the ten core tables, RLS
+policies and the `handle_new_user` trigger; the three after it add the
+append-only activity log, `import_batches`, and the atomic expense-write
+function.
 
-- **Hosted:** paste it into the Supabase dashboard SQL editor and run it.
-- **Local CLI:** `supabase start && supabase db reset`.
+- **Hosted:** paste each one into the Supabase dashboard SQL editor, in order.
+- **Local CLI:** run `supabase start && supabase db reset` **from the repo
+  root**, not from `jsapps/`.
+
+> **⚠️ There is a second, dead migrations directory at `jsapps/supabase/migrations/`**
+> — two Bolt-era files (`*_proud_mud.sql`, `*_round_mouse.sql`) describing an
+> abandoned multi-account schema that conflicts with the real one and that no
+> code references. There is no `config.toml` anywhere, so the Supabase CLI picks
+> its migrations path from the current working directory: run `db reset` from
+> `jsapps/` and you will apply the **wrong schema**. One of them also has a
+> self-referential `group_members` policy that raises
+> `infinite recursion detected in policy`. See [`docs/RLS_AUDIT.md`](docs/RLS_AUDIT.md);
+> deleting that directory is proposed but not yet done, since it is inherited
+> from the frozen upstream commit.
 
 Also disable email confirmations for local dev so sign-up logs you straight in
 (dashboard: *Auth → Providers → Email → Confirm email* off; or local
