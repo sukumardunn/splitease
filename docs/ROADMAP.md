@@ -25,6 +25,7 @@ before claiming anything.
 | 5A | **CSV import**: Splitwise export → column mapping → dry-run preview with duplicates flagged → confirm, recorded as an undoable `import_batch`. Pure pipeline in `services/csvImport.ts`; migration `20260725000001` applied and verified. | merge `6e6729a` |
 | 6A | **Expense notes + Analytics.** `notes` had existed on the schema, the `Expense` type and both row mappers since 4a with nothing writing it — now a textarea on the add-expense form and a truncated line on the expense row. New `/analytics` page: KPI tiles, spend-by-category ranked bars, a 12-month trend, and a diverging per-person balance chart, each with a table view and an empty state. Aggregation is pure in `services/analytics.ts`; charts are hand-rolled HTML, no charting dep. | merge (this phase) |
 | — | **Add Friend flow** (P0, found during the 4b smoke): the two buttons had no handler and no `addFriend`/`insertFriend` existed, so a new user could not add anyone to split with. Gave `friend.add` its first producer. Also fixed broken `<img>` avatars — `profiles.avatar`/`friends.avatar` default to `''`, now backfilled with a generated initials SVG at the mapper boundary. Extracted `useFocusTrap` and shared it with `ImportPrompt`. | `a5c198b` |
+| — | **Edit expense** (6A follow-up): `updateExpense` had existed in both `AppContext` and `supabaseStore` since 4a with **zero UI callers**, so nothing in the app could change an expense after creation — including 6A's notes. `AddExpenseModal` now takes an optional `expense` and patches instead of inserting; `ExpenseItem` grew an edit button, so all three render sites get it. Split mode is *inferred* on open (see below). Also gave the modal the focus trap, Escape, and `role="dialog"` it was missing, and largest-remaindered the category percentages that could sum to 101%. | merge (this change) |
 
 **Gate as of the Phase 6A merge:** 327 tests, green on Node 20 **and** 26;
 typecheck, build, and lint clean (3 pre-existing `react-refresh` warnings,
@@ -70,16 +71,23 @@ header comment in `services/analytics.ts`. If you add figures anywhere, match
 that convention or say plainly which one you're using; a total that silently
 means the other thing is the easiest way to make this page lie.
 
-Two follow-ups 6A consciously left open, both small:
+Both follow-ups 6A left open are now **done** — see the edit-expense row in the
+table above. What that work leaves behind, for whoever touches expenses next:
 
-- **No way to edit a note after creation.** `updateExpense` has existed since 4a
-  and still has no UI caller anywhere; the notes textarea only appears on the
-  *add* form. An edit-expense surface would be its first consumer and would make
-  notes materially more useful.
-- **Category percentages can sum to 101%** in the breakdown card, because each
-  share is rounded independently for display. The dollar figures beside them are
-  exact, so nothing is wrong — but if it bothers a reader, largest-remainder the
-  percentages rather than the amounts.
+- **Split mode is inferred, not stored.** An expense records its resolved
+  per-person amounts, never the mode that produced them. `inferSplitMode` in
+  `AddExpenseModal.tsx` claims `equal` only when the stored splits match
+  `resolveSplit`'s equal output cent-for-cent, and otherwise seeds `exact`,
+  which round-trips any split losslessly. So a percentage/shares expense reopens
+  as `exact` with the right numbers, but the reader can no longer tell it was
+  *entered* as 60/40. Storing the mode would need a migration; it was not worth
+  one on its own, but it is the natural thing to add whenever `expenses` is
+  altered next (e.g. 6B's `receipt_url`).
+- **Editing an expense the current user has no share in adds them at $0.** The
+  form hardcodes the current user into the split list, so such an expense (a
+  Phase 5A import can produce one) comes back with a $0 split row for them.
+  Numerically harmless — $0 changes no balance — but it is a row that was not
+  there before.
 
 ### P3 — Phase 7: Hosting, hardening & polish
 
