@@ -5,6 +5,7 @@ import {
   periodStart,
   filterByPeriod,
   totalsByCategory,
+  categoryTotal,
   percentageShares,
   totalsByMonth,
   summarizeSpend,
@@ -158,6 +159,63 @@ describe('totalsByCategory', () => {
   });
 });
 
+describe('categoryTotal', () => {
+  it('sums the slices and rounds to cents', () => {
+    const slices = totalsByCategory(
+      [
+        expense({ category: 'rent', splitWith: [{ userId: ME, amount: 899.99 }] }),
+        expense({ category: 'dining', splitWith: [{ userId: ME, amount: 137.41 }] }),
+        expense({ category: 'travel', splitWith: [{ userId: ME, amount: 61.33 }] }),
+      ],
+      ME
+    );
+    // Float addition alone gives 1098.7300000000002; the denominator must not
+    // carry that into the percentage column.
+    expect(categoryTotal(slices)).toBe(1098.73);
+  });
+
+  it('is 0 for an empty breakdown, so the caller divides by a real number', () => {
+    expect(categoryTotal([])).toBe(0);
+  });
+
+  it('equals summarizeSpend().total over the same expenses', () => {
+    // THE invariant. The category card's percentages are shares of
+    // `categoryTotal(slices)`; the page's "Your spend" tile shows
+    // `summarizeSpend().total`. They are two aggregates over one list, and this
+    // test is what makes their agreement enforced rather than assumed: if a
+    // future change desynchronises the predicates (a new exclusion in one path,
+    // a category dropped on the way out of `totalsByCategory`), this fails here
+    // instead of the card quietly printing percentages that no longer sum to
+    // 100 beside dollar figures that still look right.
+    const messy = [
+      expense({ category: 'rent', splitWith: [{ userId: ME, amount: 899.99 }] }),
+      expense({ category: 'dining', splitWith: [{ userId: ME, amount: 137.41 }] }),
+      expense({ category: 'dining', splitWith: [{ userId: ME, amount: 0.01 }] }),
+      expense({ category: 'travel', splitWith: [{ userId: ME, amount: 61.33 }] }),
+      expense({ category: 'utilities', splitWith: [{ userId: ME, amount: 7.5 }] }),
+      // Rows both aggregates must skip, in the same way, or the sums part.
+      expense({ category: 'settlement', splitWith: [{ userId: ME, amount: 500 }] }),
+      expense({ deletedAt: '2026-07-11T00:00:00.000Z' }),
+      expense({ category: 'shopping', splitWith: [{ userId: ALICE, amount: 80 }] }),
+      // Uneven split: shareOf rounds to cents, which is why per-category
+      // subtotals and the grand total round identically.
+      expense({ category: 'groceries', splitWith: [{ userId: ME, amount: 33.333333 }] }),
+    ];
+    expect(categoryTotal(totalsByCategory(messy, ME))).toBe(summarizeSpend(messy, ME).total);
+  });
+
+  it('accounts for every counted expense, since isSpending excludes settlements', () => {
+    // The structural reason the two agree: nothing that survives `isSpending`
+    // lands outside a category bucket, so the breakdown is exhaustive of spend.
+    const expenses = EXPENSE_CATEGORIES.map((category, i) =>
+      expense({ category, splitWith: [{ userId: ME, amount: i + 1.11 }] })
+    );
+    const slices = totalsByCategory(expenses, ME);
+    expect(slices).toHaveLength(EXPENSE_CATEGORIES.length);
+    expect(categoryTotal(slices)).toBe(summarizeSpend(expenses, ME).total);
+  });
+});
+
 describe('percentageShares', () => {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -235,13 +293,14 @@ describe('percentageShares', () => {
       expense({ category: 'utilities', splitWith: [{ userId: ME, amount: 7.5 }] }),
     ];
     const slices = totalsByCategory(expenses, ME);
-    // The page passes summarizeSpend().total as the denominator.
-    const { total } = summarizeSpend(expenses, ME);
+    // The card derives its denominator from the slices it displays.
     const shares = percentageShares(
       slices.map((s) => s.total),
-      total
+      categoryTotal(slices)
     );
     expect(sum(shares)).toBe(100);
+    // Same figure the "Your spend" tile shows — see the categoryTotal suite.
+    expect(categoryTotal(slices)).toBe(summarizeSpend(expenses, ME).total);
     // The dollar figures are untouched by the apportionment.
     expect(slices.map((s) => s.total)).toEqual([899.99, 212.07, 137.41, 61.33, 7.5]);
   });

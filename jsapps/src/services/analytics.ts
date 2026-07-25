@@ -146,6 +146,32 @@ export function totalsByCategory(expenses: Expense[], userId: string): CategoryS
 }
 
 /**
+ * Total of a category breakdown — the sum of the slices themselves.
+ *
+ * Exists so the category card has exactly one denominator for its percentage
+ * column: the total of the rows it is actually printing. The card used to be
+ * handed `summarizeSpend().total` instead — a second aggregate, walked
+ * independently over the same list, agreeing with the slices only because both
+ * happened to use the same predicates. Desynchronise those filters and the
+ * percentages quietly stop summing to 100 while every dollar figure still looks
+ * right, which is the worst kind of wrong for a chart.
+ *
+ * The two figures *are* equal for the same input today, and not by luck:
+ * `totalsByCategory` and `summarizeSpend` skip on the same two conditions
+ * (`isSpending`, then a zero `shareOf`); `isSpending` already excludes
+ * `settlement`, so every counted expense lands in exactly one category bucket;
+ * and no bucket is dropped on the way out — a bucket exists precisely because
+ * some expense put a nonzero share in it. Rounding cannot separate them either:
+ * `shareOf` returns whole cents, so the per-category subtotals and the grand
+ * total are the same sum of the same cents, merely rounded at different points.
+ * `analytics.test.ts` asserts that equality, so a change that breaks it fails a
+ * test instead of silently mislabelling a card.
+ */
+export function categoryTotal(slices: CategorySlice[]): number {
+  return roundToCents(slices.reduce((sum, slice) => sum + slice.total, 0));
+}
+
+/**
  * Whole-percent shares of `total`, apportioned by largest remainder.
  *
  * Rounding each share independently is what makes a three-way breakdown print
@@ -159,9 +185,12 @@ export function totalsByCategory(expenses: Expense[], userId: string): CategoryS
  * anything but a ratio.
  *
  * `total` is the denominator, so the result sums to exactly 100 when `values`
- * sum to `total` (which is how the category card calls it). When they sum to
- * less, the target is the rounded exact sum instead: a subset of spending must
- * not be inflated to 100%.
+ * sum to `total` — which the category card now guarantees structurally by
+ * deriving its denominator with `categoryTotal(slices)`. When they sum to less,
+ * the target is the rounded exact sum instead: a caller passing a subset gets
+ * an honest 30%, never an inflated 100%. That behaviour is deliberate and other
+ * callers may rely on it, so it stays even though the category card can no
+ * longer reach it.
  *
  * Ties in the fractional part go to the earlier index, so the output is a pure
  * function of the caller's ordering — `totalsByCategory` already sorts stably,
