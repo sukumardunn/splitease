@@ -3,6 +3,7 @@ import { Trash2, StickyNote, Pencil } from 'lucide-react';
 import { Expense } from '../../types';
 import { useAppContext } from '../../context/AppContext';
 import { getExpenseIcon, formatDate } from '../../utils/helpers';
+import { getCategoryColors } from '../../utils/categoryColors';
 import { useToast } from '../ui/Toast';
 import AddExpenseModal from './AddExpenseModal';
 
@@ -57,12 +58,15 @@ const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
     : 0;
   
   const Icon = getExpenseIcon(expense.category);
-  
+  // Literal class names from a static map: interpolating the hue here emitted no
+  // CSS at all, because Tailwind only sees what is written out in the source.
+  const colors = getCategoryColors(expense.category);
+
   return (
     <div className="flex items-center p-3 rounded-lg hover:bg-gray-50 transition-colors duration-200">
       <div className="flex-shrink-0 mr-3">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-${getCategoryColor(expense.category)}-100`}>
-          <Icon className={`w-5 h-5 text-${getCategoryColor(expense.category)}-600`} />
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${colors.bg}`}>
+          <Icon className={`w-5 h-5 ${colors.text}`} />
         </div>
       </div>
       
@@ -130,33 +134,5 @@ const ExpenseItem: React.FC<ExpenseItemProps> = ({ expense }) => {
     </div>
   );
 };
-
-// Helper function to get color based on category
-function getCategoryColor(category: string): string {
-  switch (category) {
-    case 'groceries':
-      return 'blue';
-    case 'rent':
-      return 'purple';
-    case 'utilities':
-      return 'yellow';
-    case 'dining':
-      return 'orange';
-    case 'entertainment':
-      return 'pink';
-    case 'transportation':
-      return 'indigo';
-    case 'travel':
-      return 'cyan';
-    case 'shopping':
-      return 'emerald';
-    case 'services':
-      return 'violet';
-    case 'settlement':
-      return 'green';
-    default:
-      return 'gray';
-  }
-}
 
 export default ExpenseItem;
