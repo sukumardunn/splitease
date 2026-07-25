@@ -35,7 +35,7 @@ vi.mock('../lib/supabase', () => ({
   },
 }));
 
-import { updateGroup } from './supabaseStore';
+import { insertGroup, updateGroup } from './supabaseStore';
 import type { Group } from '../types';
 
 const OWNER = 'aaaaaaaa-0000-4000-8000-000000000001';
@@ -116,5 +116,40 @@ describe('updateGroup surfaces failures instead of silently succeeding', () => {
   it('rejects when the function returns some other group id', async () => {
     nextRpcResult = { data: 'dddddddd-0000-4000-8000-000000000001', error: null };
     await expect(updateGroup(OWNER, GROUP)).rejects.toThrow(/no rows affected/);
+  });
+});
+
+describe('insertGroup goes through the same atomic RPC', () => {
+  // The third instance of this bug: create was `insert groups` then a separate
+  // `insert group_members`, so a failure between them left a group with no
+  // members. It now shares the edit path, since the function upserts.
+  it('issues exactly one request, and it is the RPC', async () => {
+    await insertGroup(OWNER, GROUP);
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].fn).toBe('update_group_with_members');
+    expect(fromCalls).toEqual([]);
+  });
+
+  it('sends the parent row and the members together', async () => {
+    await insertGroup(OWNER, GROUP);
+    const { p_group, p_members } = rpcCalls[0].args as {
+      p_group: Record<string, unknown>;
+      p_members: unknown[];
+    };
+    expect(p_group).toMatchObject({ id: ID, owner_id: OWNER, name: 'Trip' });
+    expect(p_members).toEqual([
+      { group_id: ID, person_id: OWNER },
+      { group_id: ID, person_id: FRIEND },
+    ]);
+  });
+
+  it('reports failures under its own context, not the edit path\'s', async () => {
+    nextRpcResult = { data: null, error: { message: 'boom' } };
+    await expect(insertGroup(OWNER, GROUP)).rejects.toThrow(/insert group: boom/);
+  });
+
+  it('rejects when the function returns null rather than reporting a phantom create', async () => {
+    nextRpcResult = { data: null, error: null };
+    await expect(insertGroup(OWNER, GROUP)).rejects.toThrow(/insert group: no rows affected/);
   });
 });

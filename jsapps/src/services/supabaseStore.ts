@@ -395,14 +395,22 @@ export async function setFriendDeleted(id: string, deletedAt: string | null): Pr
 
 // ---------- group writes ----------
 
+/**
+ * Create a group and its member rows.
+ *
+ * Routed through the same `update_group_with_members` RPC as the edit path: this
+ * was the third instance of the non-atomic-children bug (insert parent, then
+ * insert members, as two transactions — a failure between them left a group with
+ * no members). The function upserts, so a brand-new id flows through its insert
+ * path, where `groups_own`'s `with check` still guards `owner_id`.
+ *
+ * As with `insertExpense`, the switch from `.insert()` to an upsert makes a repeat
+ * of the *same* id idempotent rather than a 23505 duplicate-key error. Ids are
+ * client-generated uuids, and a collision with another owner's id still raises on
+ * the conflict path, so this only makes a retry safe.
+ */
 export async function insertGroup(ownerId: string, g: Group): Promise<void> {
-  const bundle = groupToRow(ownerId, g);
-  const { error } = await supabase.from('groups').insert(bundle.group);
-  if (error) fail('insert group', error.message);
-  if (bundle.members.length > 0) {
-    const { error: me } = await supabase.from('group_members').insert(bundle.members);
-    if (me) fail('insert group_members', me.message);
-  }
+  await writeGroupWithMembers('insert group', ownerId, g);
 }
 
 /**
@@ -424,18 +432,32 @@ export async function insertGroup(ownerId: string, g: Group): Promise<void> {
  * Signature is unchanged from the three-call version on purpose.
  */
 export async function updateGroup(ownerId: string, g: Group): Promise<void> {
+  await writeGroupWithMembers('update group', ownerId, g);
+}
+
+/**
+ * The one write path for a group and its members, shared by create and edit.
+ *
+ * `context` only changes the error prefix — the SQL is identical, because the
+ * function upserts and so covers both directions.
+ */
+async function writeGroupWithMembers(
+  context: string,
+  ownerId: string,
+  g: Group
+): Promise<void> {
   const bundle = groupToRow(ownerId, g);
   const { data, error } = await supabase.rpc('update_group_with_members', {
     p_group: bundle.group as unknown as Json,
     // Always sent, empty included: an empty array is how a caller empties a group.
     p_members: bundle.members as unknown as Json,
   });
-  if (error) fail('update group', error.message);
+  if (error) fail(context, error.message);
   // The RPC equivalent of `expectRowsAffected`: the function returns the id it
   // wrote and null if the upsert matched nothing, so anything other than the id we
   // asked for means our write did not land.
   if (data !== g.id) {
-    fail('update group', 'no rows affected — row is missing or not permitted by row-level security');
+    fail(context, 'no rows affected — row is missing or not permitted by row-level security');
   }
 }
 

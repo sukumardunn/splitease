@@ -1,0 +1,21 @@
+Splitease final status and summary:
+
+
+Phase 4a code complete. T1–T7 built, reviewed, merged to feature/phase4a (@ 26fbb5f). Final gate: 85/85 tests, typecheck, build, lint clean. Only T8 (live-stack verification) remains — blocked on your machine.
+
+What shipped (spec: docs/superpowers/specs/…-spec.md, plan: docs/superpowers/plans/…):
+- Migration: 9 tables + RLS + handle_new_user trigger (verbatim-verified vs spec)
+- Hand-authored database.types.ts; lib/supabase.ts now compiles
+- supabaseStore.ts: typed CRUD + mappers + batch import
+- Auth: AuthProvider, login/signup screen, session gate, sidebar logout
+- AppContext optimistic-online refactor — interface byte-identical, pages untouched, rollback+toast on persist failure
+- One-time localStorage→Postgres import (pure uuid remapper + prompt)
+
+Multi-session coordination worked live: when my wave-2 agents died at the API limit, a separate session (agent4) reclaimed my stale claim via the board, verified+merged T4/T5, then went stale itself; I reclaimed back, salvaged its partial T6, ran retroactive reviews on its merges. All via .coordination/PHASE4A_BOARD.md + ledger commits on master.
+
+Final review caught 1 real cross-task bug (legacy localStorage envelopes missing settlements/activityEvents would crash+brick the import modal) — fixed with tests, plus timestamp normalization, rollback-tradeoff comment, import type. Re-review approved. Deferred minors logged in .superpowers/sdd/progress.md for 4b.
+
+Needed from you for T8 (then I can finish: apply migration, reconcile generated types, run acceptance script, merge to master):
+1. Install Docker Desktop (needs admin; no Homebrew on this machine — use the .dmg from docker.com)
+2. Install supabase CLI (brew install supabase/tap/supabase after Homebrew, or the standalone binary)
+3. Say the word — T8 is on the board as BLOCKED with the full checklist.
