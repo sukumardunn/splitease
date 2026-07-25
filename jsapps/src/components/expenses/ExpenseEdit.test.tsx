@@ -39,7 +39,8 @@ vi.mock('../ui/Toast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }));
 
-import AddExpenseModal, { deriveFormSeed } from './AddExpenseModal';
+import AddExpenseModal from './AddExpenseModal';
+import { deriveFormSeed, resolvePaidBy } from './expenseFormSeed';
 import ExpenseItem from './ExpenseItem';
 
 function expense(over: Partial<Expense> = {}): Expense {
@@ -85,18 +86,23 @@ describe('deriveFormSeed', () => {
   });
 
   it('unpacks every field of an existing expense', () => {
-    groups = [{ id: 'g1', name: 'Flat', members: [ME.id, ALICE.id], avatar: 'g.png' }];
+    // Asserted exhaustively (not toMatchObject) so a field silently dropped
+    // from FormSeed fails here rather than surfacing as a blank input.
     const seed = deriveFormSeed(
       ME.id,
       expense({ groupId: 'g1', notes: 'Alice skipped wine', category: 'groceries' })
     );
-    expect(seed).toMatchObject({
+    expect(seed).toEqual({
       description: 'Dinner',
       amount: '40',
       category: 'groceries',
       groupId: 'g1',
       notes: 'Alice skipped wine',
+      payerIds: [ME.id],
+      payerValues: {},
+      splitMode: 'equal',
       selectedFriends: [ALICE.id],
+      splitValues: {},
     });
   });
 
@@ -155,6 +161,21 @@ describe('deriveFormSeed', () => {
     expect(deriveFormSeed(ME.id, expense({ paidBy: ALICE.id })).payerIds).toEqual([ALICE.id]);
   });
 
+  it('adds the current user at $0 when they were not on the expense', () => {
+    // Pinning a known, deliberate limitation rather than leaving it implicit:
+    // the form structurally cannot represent "I am not on this expense", so a
+    // save puts the current user on it with a zero share. Balance-neutral, but
+    // it is a stored-data change — documented in docs/ROADMAP.md.
+    const notMine = expense({ splitWith: [{ userId: ALICE.id, amount: 40 }] });
+    render(<AddExpenseModal isOpen expense={notMine} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(updateExpense.mock.calls[0][1].splitWith).toEqual([
+      { userId: ME.id, amount: 0 },
+      { userId: ALICE.id, amount: 40 },
+    ]);
+  });
+
   it('seeds multi-payer contributions', () => {
     const seed = deriveFormSeed(
       ME.id,
@@ -167,6 +188,20 @@ describe('deriveFormSeed', () => {
     );
     expect(seed.payerIds).toEqual([ME.id, ALICE.id]);
     expect(seed.payerValues).toEqual({ me: '25', alice: '15' });
+  });
+});
+
+describe('resolvePaidBy', () => {
+  it('keeps the previously recorded payer when they are still a payer', () => {
+    expect(resolvePaidBy([ALICE.id, ME.id], ME.id)).toBe(ME.id);
+  });
+
+  it('falls back to the first payer when the recorded one was removed', () => {
+    expect(resolvePaidBy([ALICE.id], ME.id)).toBe(ALICE.id);
+  });
+
+  it('uses the first payer for a new expense, which has no previous one', () => {
+    expect(resolvePaidBy([ME.id], undefined)).toBe(ME.id);
   });
 });
 
@@ -240,12 +275,49 @@ describe('AddExpenseModal in edit mode', () => {
   });
 
   it('clears a note to undefined rather than an empty string', () => {
-    // '' would persist an empty note; the mapper only writes SQL NULL for undefined.
+    // '' would persist an empty note; the mapper only writes SQL NULL for
+    // undefined. The key must still be PRESENT — `updateExpense` spreads the
+    // patch onto the stored expense, so omitting it would keep the old note.
     render(<AddExpenseModal isOpen expense={expense({ notes: 'old note' })} onClose={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Notes (Optional)'), { target: { value: '' } });
     save();
 
-    expect(updateExpense.mock.calls[0][1].notes).toBeUndefined();
+    const [, patch] = updateExpense.mock.calls[0];
+    expect('notes' in patch).toBe(true);
+    expect(patch.notes).toBeUndefined();
+  });
+
+  it('keeps a lone payer row rather than deleting it', () => {
+    // A Phase 5A import records exactly one payer. Sending `payers: undefined`
+    // here would delete that row on an otherwise no-op save.
+    const imported = expense({
+      payers: [{ userId: ME.id, amount: 40 }],
+      importBatchId: 'b1',
+    });
+    render(<AddExpenseModal isOpen expense={imported} onClose={vi.fn()} />);
+    save();
+
+    const [, patch] = updateExpense.mock.calls[0];
+    expect(patch.payers).toEqual([{ userId: ME.id, amount: 40 }]);
+  });
+
+  it('keeps the recorded payer when one is unchecked and re-checked', () => {
+    // payerIds order is not stable — it comes from an unordered select, and
+    // re-checking appends — so paidBy must not simply be payerIds[0].
+    const multi = expense({
+      paidBy: ME.id,
+      payers: [
+        { userId: ME.id, amount: 25 },
+        { userId: ALICE.id, amount: 15 },
+      ],
+    });
+    render(<AddExpenseModal isOpen expense={multi} onClose={vi.fn()} />);
+    fireEvent.click(payerBox(ME.id)); // uncheck me → [alice]
+    fireEvent.click(payerBox(ME.id)); // re-check me → [alice, me]
+    save();
+
+    const [, patch] = updateExpense.mock.calls[0];
+    expect(patch.paidBy).toBe(ME.id);
   });
 
   it('drops back to a single payer by clearing payers, not omitting them', () => {

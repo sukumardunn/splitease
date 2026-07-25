@@ -100,6 +100,26 @@ user data but has not been audited as a whole.
 
 ### P4 — Deferred / needs a decision, not code
 
+- **`updateExpense` replaces child rows non-transactionally, and a partial
+  failure loses splits while the toast claims otherwise.**
+  `supabaseStore.updateExpense` is four separate requests: upsert the parent,
+  delete `expense_payers`, delete `expense_splits`, re-insert both. If the
+  deletes land and the insert fails, the expense is left with **zero** split
+  rows, while `AppContext.mutate` rolls back only the in-memory snapshot and
+  toasts "Couldn't save your change — it was undone." That is untrue: the local
+  state is restored, the database is not, and the debt silently disappears on the
+  next fetch. This has existed in the store since 4a, but the edit-expense UI is
+  the first thing that can trigger it, which is why it is logged now. Fixing it
+  means choosing a shape — a Postgres function doing the replace in one
+  statement, or insert-first-then-delete-stragglers instead of delete-then-insert
+  — so it is a design call, not a patch. Related to the rollback-granularity item
+  below; both come from the same optimistic-write model.
+- **`useFocusTrap` never returns focus to the element that opened the dialog.**
+  On Escape or Cancel, focus drops to `<body>`, so a keyboard user loses their
+  place. Pre-existing and shared by all four modals that use the hook, but newly
+  noticeable now that the trigger is a per-row edit button in a long list —
+  closing the dialog dumps you back at the top of the page. Fix belongs in the
+  hook, so it touches every modal at once.
 - **Whole-state rollback granularity** (4b item 5): a failed write restores the
   entire state snapshot, discarding any concurrent in-flight optimistic update.
   A spec'd 4a tradeoff, commented in `AppContext.tsx`. Fixing it means choosing a
