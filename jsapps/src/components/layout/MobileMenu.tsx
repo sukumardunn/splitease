@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, Receipt, UserPlus } from 'lucide-react';
+import { Home, Users, Receipt, UserPlus, BarChart3 } from 'lucide-react';
 
 const MobileMenu: React.FC = () => {
   const location = useLocation();
@@ -14,11 +14,12 @@ const MobileMenu: React.FC = () => {
     { path: '/groups', label: 'Groups', icon: Users },
     { path: '/expenses', label: 'Expenses', icon: Receipt },
     { path: '/friends', label: 'Friends', icon: UserPlus },
+    { path: '/analytics', label: 'Analytics', icon: BarChart3 },
   ];
   
   return (
     <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-10">
-      <div className="grid grid-cols-4">
+      <div className="grid grid-cols-5">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (

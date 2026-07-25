@@ -9,6 +9,7 @@ import {
   SplitMode,
   Payer,
 } from '../../services/splitEngine';
+import { CATEGORY_LABELS, EXPENSE_CATEGORIES } from '../../services/analytics';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
@@ -34,19 +35,13 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
   const [splitMode, setSplitMode] = useState<SplitMode>('equal');
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
   const [splitValues, setSplitValues] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState('');
 
-  const categories: { value: ExpenseCategory; label: string }[] = [
-    { value: 'groceries', label: 'Groceries' },
-    { value: 'rent', label: 'Rent' },
-    { value: 'utilities', label: 'Utilities' },
-    { value: 'dining', label: 'Dining' },
-    { value: 'entertainment', label: 'Entertainment' },
-    { value: 'transportation', label: 'Transportation' },
-    { value: 'travel', label: 'Travel' },
-    { value: 'shopping', label: 'Shopping' },
-    { value: 'services', label: 'Services' },
-    { value: 'other', label: 'Other' },
-  ];
+  // Sourced from the shared label map so the picker here and the Analytics
+  // category chart can't drift apart. `settlement` is excluded by construction.
+  const categories: { value: ExpenseCategory; label: string }[] = EXPENSE_CATEGORIES.map(
+    (value) => ({ value, label: CATEGORY_LABELS[value] })
+  );
 
   const allPeople = useMemo(() => [currentUser, ...friends], [currentUser, friends]);
   const participants = useMemo(
@@ -140,6 +135,8 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
       category,
       currency: 'USD',
       groupId: selectedGroup,
+      // undefined rather than '' so the row mapper writes SQL NULL for "no note".
+      notes: notes.trim() || undefined,
     });
 
     onClose();
@@ -156,6 +153,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
     setSplitMode('equal');
     setSelectedFriends([]);
     setSplitValues({});
+    setNotes('');
   };
 
   if (!isOpen) return null;
@@ -193,10 +191,14 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="expense-description"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Description
               </label>
               <input
+                id="expense-description"
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -207,7 +209,10 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="expense-amount"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Amount
               </label>
               <div className="relative">
@@ -215,6 +220,7 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   <DollarSign className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
+                  id="expense-amount"
                   type="number"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
@@ -228,10 +234,14 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="expense-category"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Category
               </label>
               <select
+                id="expense-category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
                 className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
@@ -260,6 +270,23 @@ const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose }) =>
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="expense-notes"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                Notes (Optional)
+              </label>
+              <textarea
+                id="expense-notes"
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Add context — what it was for, who ordered what…"
+                className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-y"
+              />
             </div>
 
             <div>
