@@ -53,6 +53,7 @@ const REMOTE: store.RemoteState = {
   expenses: [],
   settlements: [],
   activityEvents: [],
+  importBatches: [],
 };
 
 /** Pre-4a localStorage shape, keyed with legacy string ids (user_1, exp_1, ...). */
@@ -79,6 +80,7 @@ const LOCAL_LEGACY_STATE: AppState = {
   ],
   settlements: [],
   activityEvents: [],
+  importBatches: [],
 };
 
 /**
@@ -188,6 +190,7 @@ const EMPTY_REMOTE: store.RemoteState = {
   expenses: [],
   settlements: [],
   activityEvents: [],
+  importBatches: [],
 };
 
 const SOME_EXPENSE = {

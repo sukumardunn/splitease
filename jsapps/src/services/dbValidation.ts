@@ -47,6 +47,8 @@ const ACTIVITY_ACTIONS: Record<ActivityAction, true> = {
   'group.restore': true,
   'settlement.create': true,
   'friend.add': true,
+  'import.create': true,
+  'import.undo': true,
   unknown: true,
 };
 
@@ -55,6 +57,7 @@ const ACTIVITY_ENTITY_TYPES: Record<ActivityEntityType, true> = {
   group: true,
   settlement: true,
   friend: true,
+  import: true,
   unknown: true,
 };
 

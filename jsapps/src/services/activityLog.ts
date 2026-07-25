@@ -17,6 +17,8 @@ export type ActivityAction =
   | 'group.restore'
   | 'settlement.create'
   | 'friend.add'
+  | 'import.create'
+  | 'import.undo'
   /** Persisted row carried a value this client doesn't recognize. Never
    *  produced by app code — only by `dbValidation` when reading the DB. */
   | 'unknown';
@@ -26,6 +28,7 @@ export type ActivityEntityType =
   | 'group'
   | 'settlement'
   | 'friend'
+  | 'import'
   /** See the note on ActivityAction's 'unknown'. */
   | 'unknown';
 
@@ -118,6 +121,13 @@ interface FriendSnapshot {
   name?: string;
 }
 
+interface ImportSnapshot {
+  source?: string;
+  filename?: string;
+  expenseCount?: number;
+  friendCount?: number;
+}
+
 function money(amount: unknown): string {
   return typeof amount === 'number' ? `$${amount.toFixed(2)}` : '$0.00';
 }
@@ -136,6 +146,20 @@ function asSettlement(value: unknown): SettlementSnapshot {
 
 function asFriend(value: unknown): FriendSnapshot {
   return (value ?? {}) as FriendSnapshot;
+}
+
+function asImport(value: unknown): ImportSnapshot {
+  return (value ?? {}) as ImportSnapshot;
+}
+
+/** "3 expenses and 1 friend" — pluralized, and omitting a zero count entirely. */
+function describeImportCounts(batch: ImportSnapshot): string {
+  const parts: string[] = [];
+  const expenses = batch.expenseCount ?? 0;
+  const friends = batch.friendCount ?? 0;
+  if (expenses > 0) parts.push(`${expenses} expense${expenses === 1 ? '' : 's'}`);
+  if (friends > 0) parts.push(`${friends} friend${friends === 1 ? '' : 's'}`);
+  return parts.length > 0 ? parts.join(' and ') : 'nothing';
 }
 
 /**
@@ -238,6 +262,23 @@ export function describeActivity(
       return {
         title: `${actor} added ${nameOf(friendId)} as a friend`,
         tone: 'friend',
+      };
+    }
+    case 'import.create': {
+      const batch = asImport(event.after);
+      const from = batch.filename ? ` from ${batch.filename}` : '';
+      return {
+        title: `${actor} imported ${describeImportCounts(batch)}${from}`,
+        subtitle: batch.source === 'csv' ? 'CSV import' : batch.source,
+        tone: 'expense',
+      };
+    }
+    case 'import.undo': {
+      const batch = asImport(event.before);
+      return {
+        title: `${actor} undid an import of ${describeImportCounts(batch)}`,
+        subtitle: batch.filename || undefined,
+        tone: 'delete',
       };
     }
     case 'unknown': {

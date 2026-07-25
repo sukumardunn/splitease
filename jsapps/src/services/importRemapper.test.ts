@@ -34,6 +34,7 @@ function baseState(): AppState {
     activityEvents: [
       { id: 'evt_1', actorId: 'user_1', action: 'expense.create', entityType: 'expense', entityId: 'exp_1', groupId: 'grp_1', before: null, after: { description: 'Dinner' }, createdAt: '2026-01-01T00:00:00.000Z' },
     ],
+    importBatches: [],
   };
 }
 
