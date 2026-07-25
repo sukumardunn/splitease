@@ -23,12 +23,13 @@ before claiming anything.
 | 4a | Supabase cutover: schema + RLS, auth, optimistic-online context, one-time local→cloud import | `services/supabaseStore.ts`, `context/`, `supabase/migrations/20260719000001_*` |
 | 4b | 11 of 12 backlog items (see [`PHASE4B_BACKLOG.md`](PHASE4B_BACKLOG.md)) | merge `855b282` |
 | 5A | **CSV import**: Splitwise export → column mapping → dry-run preview with duplicates flagged → confirm, recorded as an undoable `import_batch`. Pure pipeline in `services/csvImport.ts`; migration `20260725000001` applied and verified. | merge `6e6729a` |
+| 6A | **Expense notes + Analytics.** `notes` had existed on the schema, the `Expense` type and both row mappers since 4a with nothing writing it — now a textarea on the add-expense form and a truncated line on the expense row. New `/analytics` page: KPI tiles, spend-by-category ranked bars, a 12-month trend, and a diverging per-person balance chart, each with a table view and an empty state. Aggregation is pure in `services/analytics.ts`; charts are hand-rolled HTML, no charting dep. | merge (this phase) |
 | — | **Add Friend flow** (P0, found during the 4b smoke): the two buttons had no handler and no `addFriend`/`insertFriend` existed, so a new user could not add anyone to split with. Gave `friend.add` its first producer. Also fixed broken `<img>` avatars — `profiles.avatar`/`friends.avatar` default to `''`, now backfilled with a generated initials SVG at the mapper boundary. Extracted `useFocusTrap` and shared it with `ImportPrompt`. | `a5c198b` |
 
-**Gate as of the Phase 5A merge:** 281 tests, green on Node 20 **and** 26;
+**Gate as of the Phase 6A merge:** 327 tests, green on Node 20 **and** 26;
 typecheck, build, and lint clean (3 pre-existing `react-refresh` warnings,
-0 errors). Both flows were also driven end-to-end in a real browser against the
-hosted DB on fresh signups — see the notes below each phase.
+0 errors). Every flow was also driven end-to-end in a real browser against the
+hosted DB on a fresh signup — see the notes below each phase.
 
 ---
 
@@ -52,12 +53,33 @@ mismatch means we misread the format) but will likely reject a lot of otherwise
 good OCR rows, so 5B probably wants a repair/nudge step ahead of the planner
 rather than a change to the planner itself.
 
-### P2 — Phase 6: Attachments, notes & analytics
+### P2 — Phase 6B: Receipt attachments
 
-- `notes` already exists on `expenses` in the schema and on the `Expense` type,
-  but no UI writes it.
+**6A (notes + analytics) is done** — see the table above. What's left of Phase 6
+is attachments only:
+
 - Receipt attachments via Supabase Storage (`receipt_url`); mind free-tier egress.
-- Category-trend and person-wise analytics; follow the `dataviz` skill guidance.
+- **This one does need a migration and infra**, which is why it was split out:
+  `receipt_url` does not exist on `expenses` yet (only `notes` did), and a Storage
+  bucket plus its own RLS policies have to be created. Claim
+  `supabase/migrations/**` alone for it.
+
+**Worth knowing before starting 6B:** analytics deliberately reports the
+*current user's share* of each expense rather than its face value — see the
+header comment in `services/analytics.ts`. If you add figures anywhere, match
+that convention or say plainly which one you're using; a total that silently
+means the other thing is the easiest way to make this page lie.
+
+Two follow-ups 6A consciously left open, both small:
+
+- **No way to edit a note after creation.** `updateExpense` has existed since 4a
+  and still has no UI caller anywhere; the notes textarea only appears on the
+  *add* form. An edit-expense surface would be its first consumer and would make
+  notes materially more useful.
+- **Category percentages can sum to 101%** in the breakdown card, because each
+  share is rounded independently for display. The dollar figures beside them are
+  exact, so nothing is wrong — but if it bothers a reader, largest-remainder the
+  percentages rather than the amounts.
 
 ### P3 — Phase 7: Hosting, hardening & polish
 
@@ -82,14 +104,20 @@ user data but has not been audited as a whole.
 - **`SUPABASE_SECRET_KEY` was printed in cleartext** in an agent transcript on
   2026-07-24 (a redaction regex in a status command failed to match). It should be
   rotated in Project Settings → API if that has not already happened.
-- **Three leftover test accounts are still in the hosted project** — found while
-  verifying 5A, which reads the DB as superuser and so sees every owner:
-  `accepta_178491703417526@`, `acceptb_178491703417526@` (both empty, from the 4a
-  acceptance script) and `smoke_1784917666@` / "Smoke Tester A" (1 expense, 2
-  friends, from the 4b smoke). Earlier notes claim the smoke user was deleted; it
-  was not, or not fully. Harmless but they are real `auth.users` rows in a live
-  project. Deleting them is a one-liner (`delete from auth.users where email = …`
-  cascades) but it is someone else's data, so it was left alone.
+- **Four leftover test accounts are still in the hosted project.** Three were
+  found while verifying 5A, which reads the DB as superuser and so sees every
+  owner: `accepta_178491703417526@`, `acceptb_178491703417526@` (both empty, from
+  the 4a acceptance script) and `smoke_1784917666@` / "Smoke Tester A" (1 expense,
+  2 friends, from the 4b smoke). Earlier notes claim the smoke user was deleted;
+  it was not, or not fully. The fourth is
+  **`smoke6a_1784952000@example.com` / "Smoke Six A"** from the 6A browser
+  verification (2 friends "Alice"/"Bob", 5 expenses, 2 of them carrying notes).
+  Harmless but they are real `auth.users` rows in a live project. Deleting them is
+  a one-liner (`delete from auth.users where email = …` cascades, via
+  `SUPABASE_DB_URL` as superuser). 6A deliberately did **not** run it: the sandbox
+  blocked writing the throwaway script, and routing around a denial to run
+  `DELETE` against a live auth table is not the right call unattended. Cleaning up
+  all four together is a good one-off task for whoever has the dashboard open.
 
 ---
 
