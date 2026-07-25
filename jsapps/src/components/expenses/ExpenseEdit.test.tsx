@@ -31,6 +31,10 @@ vi.mock('../../context/AppContext', () => ({
     updateExpense,
     deleteExpense,
     restoreExpense,
+    receipts: {},
+    attachReceipt: vi.fn(),
+    removeReceipt: vi.fn(),
+    loadReceipt: vi.fn(),
     getGroupById: (id: string) => groups.find((g) => g.id === id),
   }),
 }));

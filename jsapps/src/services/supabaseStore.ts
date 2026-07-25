@@ -7,7 +7,12 @@
 import { supabase } from '../lib/supabase';
 import type { Database, Json } from '../lib/database.types';
 import { ActivityEvent } from './activityLog';
-import { toActivityAction, toActivityEntityType, toExpenseCategory } from './dbValidation';
+import {
+  toActivityAction,
+  toActivityEntityType,
+  toExpenseCategory,
+  toSplitMode,
+} from './dbValidation';
 import { Expense, Friend, Group, ImportBatch, Settlement, User } from '../types';
 import { generateAvatar } from '../utils/avatar';
 
@@ -111,6 +116,10 @@ export function expenseToRow(ownerId: string, e: Expense): ExpenseRowBundle {
       notes: e.notes ?? null,
       deleted_at: e.deletedAt ?? null,
       import_batch_id: e.importBatchId ?? null,
+      // NULL means "intent not recorded" — see the 20260725000005 migration and
+      // `inferSplitMode`. Never write '' or a guess here: the column's whole
+      // value is that a real mode is distinguishable from no mode at all.
+      split_mode: e.splitMode ?? null,
     },
     payers: (e.payers ?? []).map((p) => ({ expense_id: e.id, person_id: p.userId, amount: p.amount })),
     splits: e.splitWith.map((s) => ({ expense_id: e.id, person_id: s.userId, amount: s.amount })),
@@ -138,6 +147,7 @@ export function expenseFromRow(
     deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : row.deleted_at,
     notes: row.notes ?? undefined,
     importBatchId: row.import_batch_id,
+    splitMode: toSplitMode(row.split_mode),
   };
 }
 

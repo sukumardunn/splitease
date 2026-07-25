@@ -11,7 +11,9 @@ import {
   Payer,
 } from '../../services/splitEngine';
 import { CATEGORY_LABELS, EXPENSE_CATEGORIES } from '../../services/analytics';
+import type { EncodedReceipt } from '../../services/receiptImage';
 import { deriveFormSeed, resolvePaidBy } from './expenseFormSeed';
+import ReceiptField from './ReceiptField';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
@@ -47,7 +49,16 @@ interface ExpenseFormProps {
 }
 
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
-  const { friends, groups, currentUser, addExpense, updateExpense } = useAppContext();
+  const {
+    friends,
+    groups,
+    currentUser,
+    addExpense,
+    updateExpense,
+    receipts,
+    attachReceipt,
+    removeReceipt,
+  } = useAppContext();
   const isEdit = !!expense;
   const [seed] = useState(() => deriveFormSeed(currentUser.id, expense));
   const { containerRef, onKeyDown } = useFocusTrap<HTMLDivElement>({ onEscape: onClose });
@@ -61,6 +72,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
   const [selectedFriends, setSelectedFriends] = useState<string[]>(seed.selectedFriends);
   const [splitValues, setSplitValues] = useState<Record<string, string>>(seed.splitValues);
   const [notes, setNotes] = useState(seed.notes);
+  // Receipt changes are staged, not applied on pick: cancelling the form must
+  // leave whatever is stored untouched. `stagedReceipt` is an image already
+  // downscaled and encoded; `receiptRemoved` is the "detach on save" flag.
+  const [stagedReceipt, setStagedReceipt] = useState<EncodedReceipt | null>(null);
+  const [receiptRemoved, setReceiptRemoved] = useState(false);
+  const existingReceipt = expense ? receipts[expense.id] : undefined;
 
   // Sourced from the shared label map so the picker here and the Analytics
   // category chart can't drift apart. `settlement` is excluded by construction.
@@ -173,6 +190,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
       groupId: selectedGroup,
       // undefined rather than '' so the row mapper writes SQL NULL for "no note".
       notes: notes.trim() || undefined,
+      // The *intent*, recorded alongside the resolved amounts (migration
+      // 20260725000005). Reopening this expense reads it back instead of
+      // guessing, so a 60/40 percentage split stays a percentage split.
+      splitMode,
     };
 
     if (expense) {
@@ -180,8 +201,19 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
       // original date, and `updateExpense` patches onto the stored expense, so
       // the import batch link survives (see the note on `Expense.importBatchId`).
       updateExpense(expense.id, fields);
+      // Receipt writes are separate from the expense write and deliberately not
+      // awaited: the expense row already exists, so neither can invalidate the
+      // other, and both report their own failure by toast. Voided rather than
+      // chained because this component unmounts on the next line.
+      if (stagedReceipt) {
+        void attachReceipt(expense.id, stagedReceipt);
+      } else if (receiptRemoved && existingReceipt) {
+        void removeReceipt(expense.id);
+      }
     } else {
-      addExpense({ ...fields, currency: 'USD' });
+      // On create the id does not exist yet, so the receipt is handed to
+      // `addExpense`, which writes it straight after the parent row.
+      addExpense({ ...fields, currency: 'USD' }, stagedReceipt ?? undefined);
     }
 
     // No form reset: closing unmounts this component (the wrapper renders null),
@@ -330,6 +362,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ onClose, expense }) => {
                 className="w-full border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-y"
               />
             </div>
+
+            <ReceiptField
+              existing={existingReceipt}
+              staged={stagedReceipt}
+              removed={receiptRemoved}
+              onStage={setStagedReceipt}
+              onRemovedChange={setReceiptRemoved}
+            />
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
