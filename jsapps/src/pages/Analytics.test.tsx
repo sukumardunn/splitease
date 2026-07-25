@@ -136,6 +136,28 @@ describe('Analytics category breakdown', () => {
     expect(categoryCard.getByText('25%')).toBeInTheDocument();
   });
 
+  it('prints a percentage column that sums to 100 beside the exact dollar figures', () => {
+    // End to end through the page: the card's denominator is the breakdown it
+    // renders, not the "Your spend" tile's separately computed total, so the
+    // column a reader adds up cannot drift from the figures beside it.
+    expenses = [
+      expense({ category: 'rent', splitWith: [{ userId: ME.id, amount: 899.99 }] }),
+      expense({ category: 'dining', splitWith: [{ userId: ME.id, amount: 137.41 }] }),
+      expense({ category: 'travel', splitWith: [{ userId: ME.id, amount: 61.33 }] }),
+    ];
+    renderPage();
+    const categoryCard = card('Spending by category');
+    const percents = [...categoryCard.getAllByText(/^\d+%$/)].map((el) =>
+      parseInt(el.textContent ?? '', 10)
+    );
+    expect(percents.reduce((a, b) => a + b, 0)).toBe(100);
+    expect(categoryCard.getByText('$899.99')).toBeInTheDocument();
+    expect(categoryCard.getByText('$137.41')).toBeInTheDocument();
+    expect(categoryCard.getByText('$61.33')).toBeInTheDocument();
+    // …and it is the same money the headline tile reports.
+    expect(tile('Your spend').getByText('$1,098.73')).toBeInTheDocument();
+  });
+
   it('does not count settlements as spending', () => {
     expenses = [
       expense({ category: 'settlement', splitWith: [{ userId: ME.id, amount: 500 }] }),
