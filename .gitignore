@@ -4,3 +4,6 @@
 
 # Agent worktrees (transient, each is its own checkout)
 .claude/worktrees/
+
+# Screenshot harness deps (scripts/screenshots/npm install)
+node_modules/

@@ -1,0 +1,14 @@
+{
+  "name": "splitease-screenshot-harness",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright harness that captures every SplitEase screen into working_prototype_screenshots/v<N> for cross-phase UI comparison.",
+  "type": "commonjs",
+  "scripts": {
+    "capture": "node capture.js",
+    "seed": "node seed.js"
+  },
+  "dependencies": {
+    "playwright": "^1.62.0"
+  }
+}
