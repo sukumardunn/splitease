@@ -18,7 +18,9 @@ const path = require('path');
 
 const REPO = path.resolve(__dirname, '../..');
 const ROOT = path.join(REPO, 'working_prototype_screenshots');
-const BASE = process.env.SPLITEASE_URL || 'http://localhost:5173';
+// Local dev port allocation (~/.claude/docs/port-allocation.md): splitease's
+// registered block is base 43200, web/vite is +0.
+const BASE = process.env.SPLITEASE_URL || 'http://localhost:43200';
 const EMAIL = process.env.SPLITEASE_DEMO_EMAIL || 'demo@splitease.local';
 const PASSWORD = process.env.SPLITEASE_DEMO_PASSWORD || 'demo1234';
 
