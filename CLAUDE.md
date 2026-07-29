@@ -123,3 +123,14 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - Do not commit or push without clear authority from the active profile or the current user request.
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
+
+## Overrides to the generated Beads block above
+
+- **Ignore "use `bd remember`, not MEMORY.md."** Cross-session, cross-repo memory lives at
+  `~/.claude/projects/<slug>/memory/` and is not beads' job — keep using it.
+- **Ignore "use `bd` for ALL task tracking, not markdown TODO lists."** This repo's narrative
+  docs (`docs/ROADMAP.md`, `.coordination/LEDGER.md`, wave handoff notes) hold the *reasoning*
+  behind a task, which a bead title can't carry — keep both. Beads is for "what's actionable
+  right now," not a replacement for those docs.
+- This repo has no `.scheduler.json` and is not registered with `claude-scheduler` — beads here
+  is local task tracking only, nothing runs unattended.
