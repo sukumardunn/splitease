@@ -1,0 +1,30 @@
+For a Splitwise-style app at 30-40 users, the data shape (people, expenses, splits, balances, receipts) is inherently relational and needs correctness on money math — that alone should decide most of this.
+
+┌──────────────┬──────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────┐
+│    Layer     │                               Pick                               │                                 Why                                  │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│              │                                                                  │ Real Postgres (not a bolted-on abstraction), foreign                 │
+│ Database     │ Supabase Postgres                                                │ keys/transactions for split math, and comes bundled with the next    │
+│              │                                                                  │ two rows                                                             │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│ Auth         │ Supabase Auth                                                    │ Email/magic-link/social login for free — no bcrypt/JWT code to write │
+│              │                                                                  │  or patch yourself                                                   │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│ Backend      │ Supabase's auto-generated REST API + Row Level Security, custom  │ Most of a Splitwise clone is CRUD + "who owes whom" math that SQL    │
+│ logic        │ logic only where you need it (settle-up calculations) via        │ does natively — you're writing far less backend code than your       │
+│              │ Postgres functions or a couple of Supabase Edge Functions        │ current Fastify server                                               │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│ File storage │ Supabase Storage                                                 │ Receipt photos, same platform, same free tier                        │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│ Frontend     │ Vue (keep what you know) or React, built static                  │ Deployed to Cloudflare Pages or Netlify, free, no server to maintain │
+├──────────────┼──────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+│ Realtime     │                                                                  │ "Someone added an expense" pushes live to the group — bundled in, no │
+│ (optional)   │ Supabase Realtime (Postgres change subscriptions)                │  extra infra, ties back to the Durable-Objects-style pattern from    │
+│              │                                                                  │ the chess discussion but zero setup here                             │
+└──────────────┴──────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┘
+
+Why this wins on your three constraints
+
+- Maintain: nothing to patch or keep alive — no Node process, no Docker image, no better-sqlite3, no cron of backups. This is the actual lever for "easy to maintain," more than any hosting choice.
+- Cost: at 30-40 users, you don't leave the free tier — Supabase free tier covers 500MB DB, 50k monthly active users, 1GB file storage, 500k edge-function calls; Cloudflare Pages is free for the frontend. Supabase pricing 2026
+- Reliable: Supabase runs backups/updates/failover for you (paid tier gets you SLA/backups if you ever need it — still cheap at $25/mo, and splitting that 30-40 ways is a joke your own app could settle).
