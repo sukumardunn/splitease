@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "splitease",
+  "project_id": "0a1130a5-fca0-4163-8fbb-f9e504b73391"
+}
